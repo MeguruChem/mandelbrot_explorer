@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mandelbrot Explorer</title>
+<style>
+:root { --bg: #07080d; --fg: #e7e9f3; --muted: #959cb6; --line: rgba(150,162,210,0.25); --accent: #f0b247; color-scheme: dark; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.7 "IBM Plex Sans JP", "Hiragino Kaku Gothic ProN", "Noto Sans JP", system-ui, sans-serif; }
+main { max-width: 640px; margin: 0 auto; padding: 48px max(16px, env(safe-area-inset-left, 0px)) 48px max(16px, env(safe-area-inset-right, 0px)); }
+h1 { font-size: 22px; margin: 0 0 8px; }
+p { color: var(--muted); margin: 0 0 24px; }
+a.card { display: block; padding: 16px 18px; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--fg); text-decoration: none; }
+a.card:hover, a.card:focus-visible { border-color: var(--accent); outline: none; }
+a.card b { display: block; font-size: 16px; }
+a.card span { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Mandelbrot Explorer</h1>
+  <p>ブラウザだけで動く、マンデルブロ集合とその仲間のビューアです。</p>
+  <a class="card" href="mandelbrot/"><b>マンデルブロ・エクスプローラー</b><span>摂動論＋BLA で約 10²⁹⁰ 倍まで潜れる2次元ビューア。ランダムツアー、有名な点へのダイブ、ジュリア集合モード付き。</span></a>
+  <a class="card" href="mandelbulb/"><b>マンデルバルブ</b><span>3次元版のマンデルバルブとジュリアバルブを、WebGL のレイマーチングで回して眺めるビューア。</span></a>
+</main>
+</body>
+</html>

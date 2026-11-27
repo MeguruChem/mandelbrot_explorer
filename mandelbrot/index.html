@@ -1,0 +1,1814 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); box-sizing: border-box; height: 100%; }
+body { margin: 0; font: 14px/1.5 system-ui, sans-serif; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<title>マンデルブロ・エクスプローラー</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+JP:wght@400;500;700&display=swap">
+<style>
+/* Layout: full-bleed fractal canvas; a floating instrument panel (top-left on desktop, bottom sheet on phones) and a coordinate readout. Single dark look by design. */
+:root {
+  --bg: #06070c;
+  --panel: rgba(12, 14, 24, 0.84);
+  --panel-solid: #0e1120;
+  --line: rgba(150, 162, 210, 0.2);
+  --fg: #e7e9f3;
+  --muted: #959cb6;
+  --accent: #f0b247;
+  --accent-ink: #1a1206;
+  --warn: #ff8a6b;
+  --ok: #7fd6a8;
+  --font-ui: "IBM Plex Sans JP", "Hiragino Kaku Gothic ProN", "Noto Sans JP", system-ui, sans-serif;
+  --font-num: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); overflow: hidden; }
+#app { position: relative; height: 100%; width: 100%; overflow: hidden; }
+#view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; background: var(--bg); }
+#view.dragging { cursor: grabbing; }
+
+#panel {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 16px);
+  left: max(16px, env(safe-area-inset-left, 0px));
+  width: 300px;
+  max-height: calc(100% - 32px);
+  overflow: hidden;
+  background: var(--panel);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: flex; flex-direction: column;
+}
+.p-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+[hidden] { display: none !important; }
+.p-head h1 { font-size: 13px; font-weight: 700; margin: 0; letter-spacing: 0.01em; min-width: 0; }
+.p-head h1 small { display: block; font-family: var(--font-num); font-size: 10.5px; font-weight: 400; color: var(--muted); letter-spacing: 0.04em; margin-top: 2px; }
+.p-fixed { flex: none; border-bottom: 1px solid var(--line); }
+.p-head { border-bottom: 0; }
+.actions { padding: 0 14px 12px; }
+.kind { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin: 0 14px 6px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.kind button { border: 0; border-radius: 0; background: transparent; color: var(--muted); padding: 7px 6px; font-size: 12.5px; }
+.kind button + button { border-left: 1px solid var(--line); }
+.kind button[aria-pressed="true"] { background: rgba(240,178,71,0.14); color: var(--fg); font-weight: 700; }
+.kind-note { margin: 0 14px 10px; font-size: 11.5px; line-height: 1.5; color: var(--muted); }
+body.is-julia .only-mandel { opacity: 0.45; }
+.p-body { padding: 14px; overflow-y: auto; min-height: 0; flex: 1 1 auto; overscroll-behavior: contain; }
+.pane { display: flex; flex-direction: column; gap: 14px; }
+.tabs { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; padding: 0 6px; }
+.tabs button { background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 9px 4px 8px; color: var(--muted); font-size: 13px; }
+.tabs button:hover { color: var(--fg); border-color: transparent; border-bottom-color: var(--line); }
+.tabs button[aria-selected="true"] { color: var(--fg); font-weight: 700; border-bottom-color: var(--accent); }
+#panel.collapsed .tabs, #panel.collapsed .p-body { display: none; }
+#panel.collapsed .p-fixed { border-bottom: 0; }
+
+#look {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 16px);
+  right: max(16px, env(safe-area-inset-right, 0px));
+  width: 230px;
+  background: var(--panel);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.look-head { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; background: transparent; border: 0; border-radius: 10px; padding: 10px 14px; font-size: 13px; font-weight: 700; }
+.look-head:hover { border-color: transparent; }
+.look-head::after { content: "▾"; color: var(--muted); font-weight: 400; margin-left: auto; transition: transform 0.15s; }
+.look-head[aria-expanded="false"]::after { transform: rotate(-90deg); }
+.swatch { width: 54px; height: 10px; border-radius: 3px; border: 1px solid var(--line); flex: none; }
+.look-body { padding: 4px 14px 14px; display: flex; flex-direction: column; gap: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+#look.collapsed { width: auto; }
+#look.collapsed .look-body { display: none; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+button, select { font: inherit; font-size: 13px; color: var(--fg); background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 7px; padding: 7px 11px; cursor: pointer; }
+button:hover, select:hover { border-color: rgba(200,210,255,0.4); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
+button.primary[aria-pressed="true"] { background: transparent; color: var(--accent); }
+button.ghost { background: transparent; border-color: transparent; padding: 4px 8px; color: var(--muted); white-space: nowrap; flex: none; }
+select { width: 100%; background-color: var(--panel-solid); }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field > label, .lbl { font-size: 11px; letter-spacing: 0.08em; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+.field output { font-family: var(--font-num); color: var(--fg); letter-spacing: 0; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+.check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.45; cursor: pointer; }
+.check input { margin-top: 3px; accent-color: var(--accent); }
+.check span small { display: block; color: var(--muted); font-size: 11.5px; }
+.meter { height: 6px; border-radius: 3px; background: rgba(255,255,255,0.08); overflow: hidden; }
+.meter i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--ok), var(--accent) 70%, var(--warn)); }
+.note { font-size: 12px; line-height: 1.6; color: var(--muted); margin: 0; }
+.note.warn { color: var(--warn); }
+.hint { font-size: 12px; line-height: 1.7; color: var(--muted); margin: 0; padding: 0; list-style: none; }
+.hint b { color: var(--fg); font-weight: 500; }
+hr { border: 0; border-top: 1px solid var(--line); margin: 0; }
+
+#hud {
+  position: absolute;
+  right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  background: var(--panel);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-family: var(--font-num);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.6;
+  max-width: calc(100% - 32px);
+  pointer-events: none;
+}
+.hud-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.hud-btn { pointer-events: auto; flex: none; width: 24px; height: 24px; padding: 0; display: grid; place-items: center; font-family: var(--font-num); font-size: 15px; line-height: 1; color: var(--muted); background: rgba(255,255,255,0.06); border-radius: 6px; }
+.hud-btn:hover { color: var(--fg); }
+#hud.compact .hud-more { display: none; }
+#hud.compact .hud-status .k { display: none; }
+#hud.compact { padding: 6px 8px 6px 10px; }
+#hud .zoom { font-size: 20px; font-weight: 500; color: var(--fg); letter-spacing: -0.01em; }
+#hud .zoom sup { font-size: 12px; }
+#hud .k { color: var(--muted); display: inline-block; width: 5.2em; }
+#hud .coord { word-break: break-all; }
+#status { color: var(--accent); }
+
+@media (max-width: 640px) {
+  #panel {
+    top: auto;
+    left: max(10px, env(safe-area-inset-left, 0px));
+    right: max(10px, env(safe-area-inset-right, 0px));
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+    width: auto;
+    max-height: 55%;
+  }
+  .p-head { padding: 10px 14px 8px; }
+  .p-head h1 small { display: none; }
+  .actions { padding-bottom: 10px; }
+  .actions button { padding: 6px 10px; }
+  #look {
+    top: calc(env(safe-area-inset-top, 0px) + 10px);
+    right: max(10px, env(safe-area-inset-right, 0px));
+    width: 200px;
+  }
+  #look.collapsed { width: auto; }
+  #hud {
+    max-width: calc(100% - 20px);
+    right: auto;
+    left: max(10px, env(safe-area-inset-left, 0px));
+    top: calc(env(safe-area-inset-top, 0px) + 10px);
+    bottom: auto;
+    font-size: 11px;
+    padding: 8px 10px;
+  }
+  #hud .zoom { font-size: 15px; }
+  #hud.compact .zoom { font-size: 13px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+textarea { width: 100%; box-sizing: border-box; font-family: var(--font-num); font-size: 11.5px; line-height: 1.5; color: var(--fg); background: var(--panel-solid); border: 1px solid var(--line); border-radius: 7px; padding: 8px; resize: vertical; word-break: break-all; }
+.dives { display: flex; flex-direction: column; gap: 6px; }
+button.dive { text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 8px 11px; }
+button.dive b { font-weight: 500; font-size: 13px; }
+button.dive small { color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+button.dive[aria-pressed="true"] { border-color: var(--accent); background: rgba(240,178,71,0.1); }
+button.dive[aria-pressed="true"] b { color: var(--accent); }
+#coordMsg { font-size: 12px; color: var(--muted); min-height: 1em; }
+#coordMsg.err { color: var(--warn); }
+</style>
+
+<div id="app">
+  <canvas id="view" aria-label="マンデルブロ集合の描画領域。ドラッグで移動、ホイールかピンチで拡大縮小。"></canvas>
+
+  <aside id="panel">
+    <div class="p-fixed">
+      <div class="p-head">
+        <h1>マンデルブロ・エクスプローラー<small>z ← z² + c ／ 摂動論＋BLAで 10²⁹⁰ 倍まで</small></h1>
+        <button class="ghost" id="toggle" aria-expanded="true" aria-controls="ptabs pbody">たたむ</button>
+      </div>
+      <div class="kind" role="group" aria-label="描く集合">
+        <button id="kind-m" aria-pressed="true">マンデルブロ集合</button>
+        <button id="kind-j" aria-pressed="false">ジュリア集合</button>
+      </div>
+      <p class="kind-note" id="kindNote">ジュリア集合は、今の画面中心の c を使って描きます。</p>
+      <div class="row actions">
+        <button class="primary" id="auto" aria-pressed="false">▶ 自動ズーム</button>
+        <button id="tour">ランダムツアー開始</button>
+        <button id="reset">全体に戻る</button>
+      </div>
+      <div class="tabs" id="ptabs" role="tablist" aria-label="操作パネルの切り替え">
+        <button role="tab" id="tab-explore" aria-controls="pane-explore" aria-selected="true">探索</button>
+        <button role="tab" id="tab-dest" aria-controls="pane-dest" aria-selected="false" tabindex="-1">行き先</button>
+        <button role="tab" id="tab-calc" aria-controls="pane-calc" aria-selected="false" tabindex="-1">計算</button>
+        <button role="tab" id="tab-look" aria-controls="pane-look" aria-selected="false" tabindex="-1" hidden>表示</button>
+      </div>
+    </div>
+    <div class="p-body" id="pbody">
+      <section class="pane" id="pane-explore" role="tabpanel" aria-labelledby="tab-explore">
+        <div class="field">
+          <label for="mode">自動ズームの進み方</label>
+          <select id="mode">
+            <option value="tour">ツアー：乱数で出発し、勾配の大きい点を追う</option>
+            <option value="slow">発散が最も遅い点を追う</option>
+            <option value="straight">中心にまっすぐ潜る</option>
+          </select>
+          <p class="note" id="modeNote"></p>
+        </div>
+        <div class="field" id="retargetField">
+          <label for="retarget">ターゲットを選び直す間隔 <output id="retargetOut"></output></label>
+          <input type="range" id="retarget" min="0.1" max="3" step="0.1" value="0.5">
+        </div>
+        <div class="field">
+          <label for="speed">自動ズームの最高速度 <output id="speedOut"></output></label>
+          <input type="range" id="speed" min="0.3" max="5" step="0.1" value="1.2">
+          <p class="note">描画が追いつかない深さでは、この値を上限に自動で減速します。</p>
+        </div>
+        <hr>
+        <ul class="hint">
+          <li><b>ドラッグ</b> 移動（自動ズーム中もかじ取りできます）</li>
+          <li><b>ホイール／ピンチ</b> 拡大・縮小</li>
+          <li><b>ダブルクリック</b> その点を3倍に（Shift で縮小）</li>
+          <li><b>Space</b> 一時停止・再開 ／ <b>+ −</b> 拡大縮小</li>
+          <li>ダイブ中に画面に触れると一時停止します。見回したあと「再開」で元の目的地へ戻って続きを潜ります。</li>
+        </ul>
+      </section>
+
+      <section class="pane" id="pane-dest" role="tabpanel" aria-labelledby="tab-dest" hidden>
+        <p class="note only-julia-note" id="destJuliaNote" hidden>ここの行き先はマンデルブロ集合の場所です。選ぶとマンデルブロ集合に戻って移動します。</p>
+        <div class="field">
+          <span class="lbl">有名な点へダイブ</span>
+          <div class="dives" id="dives"></div>
+          <p class="note" id="diveNote">押すと全体表示に戻り、その点を目指してまっすぐ潜り続けます。座標は高精度計算で数十〜百桁まで求めた値です。</p>
+        </div>
+        <hr>
+        <div class="field">
+          <label for="preset">有名な地点へ移動</label>
+          <select id="preset"></select>
+        </div>
+        <div class="field">
+          <label for="coordIn">座標（Re・Im・倍率）</label>
+          <textarea id="coordIn" rows="4" spellcheck="false" placeholder="-0.743643887037151&#10;0.131825904205330&#10;1e8"></textarea>
+          <div class="row">
+            <button id="copyCoord">現在地を書き出す</button>
+            <button id="goCoord">この座標へ移動</button>
+          </div>
+          <span id="coordMsg"></span>
+        </div>
+      </section>
+
+      <section class="pane" id="pane-calc" role="tabpanel" aria-labelledby="tab-calc" hidden>
+        <div class="field">
+          <span class="lbl">計算方式 <output id="engineOut"></output></span>
+          <div class="meter"><i id="precBar"></i></div>
+          <p class="note" id="precNote"></p>
+        </div>
+        <div class="field">
+          <label for="quality">描画品質</label>
+          <select id="quality">
+            <option value="exact">正確：すべてのピクセルを計算</option>
+            <option value="std">標準：なめらかな所は補間</option>
+            <option value="lite">軽量：解像度を半分にして補間を増やす</option>
+          </select>
+          <p class="note">4ピクセルおきの格子点だけ計算し、各点の「集合までの推定距離」の円がマス全体を覆うとき（＝マスの中に集合がなさそうなとき）だけ、中を補間します。補間は色の元の値ではなく、集合の外側でなめらかな「ポテンシャル」の上で行います。標準は推定距離そのもの、軽量はその4倍の円で判定します。自動ズーム中は格子点だけ計算して、なめらかに埋めます。</p>
+        </div>
+        <hr>
+        <label class="check" for="useWasm">
+          <input type="checkbox" id="useWasm" checked>
+          <span>WebAssemblyで計算する
+            <small>反復ループをAssemblyScriptで書いてwasmにしたものを使います。外すと同じ処理をJavaScriptで実行するので、速さを比べられます。</small>
+          </span>
+        </label>
+        <label class="check" for="useSimd">
+          <input type="checkbox" id="useSimd" checked>
+          <span>SIMDで2ピクセルずつ計算する
+            <small>WebAssemblyの128bit SIMD命令で、隣り合う2ピクセルを同じ命令で同時に計算します。2つの軌道の歩調がずれたら、その時点から1ピクセルずつに戻ります。</small>
+          </span>
+        </label>
+        <label class="check" for="useBla">
+          <input type="checkbox" id="useBla" checked>
+          <span>BLAで反復をまとめて飛ばす
+            <small>参照軌道から「2ᵏ回分の反復を1次式1つにまとめた表」を作り、誤差が小さいうちは一気に飛ばします。外すと1回ずつ計算するので、速さと画像を比べられます。</small>
+          </span>
+        </label>
+        <label class="check" for="useInterior">
+          <input type="checkbox" id="useInterior">
+          <span>内側判定（摂動論の計算で）
+            <small>軌道が前に通った点に戻り、しかも1周で縮んでいれば（吸引的な周期軌道）、集合の内側として計算を打ち切ります。BLAが内側の点をすでに速く飛ばすため、今の実装ではほとんど速くならず、境界すれすれの点をまれに黒く塗るので初期設定はオフです。</small>
+          </span>
+        </label>
+        <label class="check" for="dblOnly">
+          <input type="checkbox" id="dblOnly">
+          <span>doubleだけで計算する
+            <small>摂動論を切ると、倍率10¹³前後で画像がブロック状に崩れる様子を確かめられます。</small>
+          </span>
+        </label>
+        <hr>
+        <div class="field">
+          <label for="iters">反復回数の倍率 <output id="itersOut"></output></label>
+          <input type="range" id="iters" min="-1" max="3" step="0.25" value="0">
+          <p class="note">境界付近が黒くつぶれるときは上げてください。計算は遅くなります。</p>
+        </div>
+      </section>
+      <section class="pane" id="pane-look" role="tabpanel" aria-labelledby="tab-look" hidden></section>
+    </div>
+  </aside>
+
+  <aside id="look">
+    <button class="look-head" id="lookToggle" aria-expanded="true" aria-controls="lookBody">
+      <span>表示</span><span class="swatch" id="swatch" aria-hidden="true"></span>
+    </button>
+    <div class="look-body" id="lookBody">
+      <div class="field">
+        <label for="palette">配色</label>
+        <select id="palette"></select>
+      </div>
+      <div class="field">
+        <label for="density">色の密度 <output id="densityOut"></output></label>
+        <input type="range" id="density" min="-4" max="1" step="0.05" value="-2.5">
+      </div>
+    </div>
+  </aside>
+
+  <div id="hud">
+    <div class="hud-top">
+      <div class="zoom" id="zoomOut">×1</div>
+      <button class="hud-btn" id="hudToggle" aria-expanded="true" aria-controls="hudMore" aria-label="座標表示を小さくする">−</button>
+    </div>
+    <div class="hud-more" id="hudMore">
+      <div class="coord" id="cRow" hidden><span class="k">c</span><span id="cOut"></span></div>
+      <div class="coord"><span class="k">Re</span><span id="reOut"></span></div>
+      <div class="coord"><span class="k">Im</span><span id="imOut"></span></div>
+      <div><span class="k">反復上限</span><span id="iterOut"></span></div>
+      <div><span class="k">計算</span><span id="engHud"></span></div>
+    </div>
+    <div class="hud-status"><span class="k">状態</span><span id="status">準備中</span></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+
+  /* ================= Workers ================= */
+
+  // Pixel worker: plain double iteration, or perturbation (+BLA) against a reference orbit,
+  // with adaptive "guessing": compute a coarse grid, interpolate smooth cells, refine the rest.
+  const workerSrc = `
+    let mainRef = null, fixRef = null;
+    var statIters = 0, statSkip = 0, lastDE = 0, wantDE = false;
+    // |z| log|z| / |dz/dc|: about the distance from c to the set
+    function deOf(mag, dcr, dci) {
+      const d = Math.sqrt(dcr * dcr + dci * dci);
+      return d > 0 ? 0.5 * Math.sqrt(mag) * Math.log(mag) / d : 0;
+    }
+    function smooth(n, mag) {
+      const logZn = Math.log(mag) * 0.5;
+      return Math.max(0, n - Math.log(logZn / Math.LN2) / Math.LN2);
+    }
+    function ptD(cr, ci, maxIter) {
+      const xq = cr - 0.25, q = xq * xq + ci * ci;
+      if (q * (q + xq) <= 0.25 * ci * ci) return -1;
+      const xb = cr + 1; if (xb * xb + ci * ci <= 0.0625) return -1;
+      let zr = 0, zi = 0, zr2 = 0, zi2 = 0, n = 0, dcr = 0, dci = 0;
+      let pr = 0, pi = 0, per = 0, perLen = 8;
+      lastDE = 0;
+      for (; n < maxIter; n++) {
+        if (wantDE) { const t = 2 * (zr * dcr - zi * dci) + 1; dci = 2 * (zr * dci + zi * dcr); dcr = t; }
+        zi = 2 * zr * zi + ci;
+        zr = zr2 - zi2 + cr;
+        zr2 = zr * zr; zi2 = zi * zi;
+        if (zr2 + zi2 > 1e6) break;
+        if (zr === pr && zi === pi) { statIters += n; return -1; }
+        if (++per > perLen) { per = 0; perLen *= 2; pr = zr; pi = zi; }
+      }
+      statIters += n;
+      if (n >= maxIter) return -1;
+      if (wantDE) lastDE = deOf(zr2 + zi2, dcr, dci);
+      return smooth(n + 1, zr2 + zi2);
+    }
+
+    // Julia set: z0 = pixel, c fixed; distance estimate uses dz/dz0 (starts at 1, no +1 term)
+    function ptJ(zr, zi, cr, ci, maxIter) {
+      let zr2 = zr * zr, zi2 = zi * zi, n = 0, dcr = 1, dci = 0, pr = 0, pi = 0, per = 0, perLen = 8;
+      lastDE = 0;
+      for (; n < maxIter; n++) {
+        if (wantDE) { const t = 2 * (zr * dcr - zi * dci); dci = 2 * (zr * dci + zi * dcr); dcr = t; }
+        zi = 2 * zr * zi + ci;
+        zr = zr2 - zi2 + cr;
+        zr2 = zr * zr; zi2 = zi * zi;
+        if (zr2 + zi2 > 1e6) break;
+        if (zr === pr && zi === pi) { statIters += n; return -1; }
+        if (++per > perLen) { per = 0; perLen *= 2; pr = zr; pi = zi; }
+      }
+      statIters += n;
+      if (n >= maxIter) return -1;
+      if (wantDE) lastDE = deOf(zr2 + zi2, dcr, dci);
+      return smooth(n + 1, zr2 + zi2);
+    }
+
+    // ---- Bilinear approximation (BLA) ----
+    // Level 0 entry for step m: eps_{m+1} ~ A eps_m + B delta with A = 2 Z_m, B = 1,
+    // valid while |eps_m| < R = 2^-24 |Z_m| (the dropped eps^2 term is negligible).
+    // Level l merges two level l-1 entries x then y:
+    //   A = Ay Ax, B = Ay Bx + By, R = max(0, min(Rx, (Ry - |Bx| cmax) / |Ax|))
+    // so one entry skips 2^l iterations starting at m = idx * 2^l + 1.
+    function buildBLA(Z, len, cmax) {
+      const n0 = len - 2;
+      const levels = [null];
+      if (n0 < 2) return { cmax: cmax, levels: levels };
+      const eps = Math.pow(2, -24);
+      let prev = new Float64Array(n0 * 5);
+      for (let i = 0; i < n0; i++) {
+        const m = i + 1, zr = Z[2 * m], zi = Z[2 * m + 1], k = i * 5;
+        prev[k] = 2 * zr; prev[k + 1] = 2 * zi; prev[k + 2] = 1; prev[k + 3] = 0;
+        prev[k + 4] = eps * Math.sqrt(zr * zr + zi * zi);
+      }
+      levels[0] = prev;
+      let count = n0;
+      while (count >= 2) {
+        const nc = count >> 1, L = new Float64Array(nc * 5);
+        for (let i = 0; i < nc; i++) {
+          const x = 10 * i, y = x + 5, k = 5 * i;
+          const axr = prev[x], axi = prev[x + 1], bxr = prev[x + 2], bxi = prev[x + 3], rx = prev[x + 4];
+          const ayr = prev[y], ayi = prev[y + 1], byr = prev[y + 2], byi = prev[y + 3], ry = prev[y + 4];
+          L[k] = ayr * axr - ayi * axi;
+          L[k + 1] = ayr * axi + ayi * axr;
+          L[k + 2] = ayr * bxr - ayi * bxi + byr;
+          L[k + 3] = ayr * bxi + ayi * bxr + byi;
+          const ax = Math.sqrt(axr * axr + axi * axi), bx = Math.sqrt(bxr * bxr + bxi * bxi);
+          const r = ax > 0 ? (ry - bx * cmax) / ax : rx;
+          L[k + 4] = Math.max(0, Math.min(rx, r));
+        }
+        levels.push(L);
+        prev = L; count = nc;
+      }
+      return { cmax: cmax, levels: levels };
+    }
+
+    // eps_{n+1} = 2 Z_m eps + eps^2 + delta ; rebase to the start of the reference when
+    // |z| < |eps| (Zhuoran). Returns -2 when the reference ran out (glitch).
+    // Interior detection: Brent's schedule saves z every 2^k iterations and resets d = dz_n/dz_saved.
+    // If the orbit returns to the saved point (relative distance < 1e-6) with |d| < 1/2 over that
+    // loop, the loop is an attracting cycle and c is interior. Exterior orbits passing near a
+    // cycle see |d| > 1 there.
+    function ptPB(dr, di, maxIter, Z, len, T, interior) {
+      const lv = T ? T.levels : null, top = T ? lv.length - 1 : 0;
+      let er = 0, ei = 0, dzr = 1, dzi = 0, dcr = 0, dci = 0, sr = 0, si = 0, per = 0, perLen = 8, m = 0, n = 0;
+      lastDE = 0;
+      while (n < maxIter) {
+        let applied = false;
+        if (top >= 1 && m > 0) {
+          const e2 = er * er + ei * ei;
+          const mm = m - 1;
+          let lmax = mm === 0 ? top : 31 - Math.clz32(mm & -mm);
+          if (lmax > top) lmax = top;
+          for (let l = lmax; l >= 1; l--) {
+            const step = 1 << l;
+            if (m + step > len - 1 || n + step > maxIter) continue;
+            const L = lv[l], k = (mm >> l) * 5;
+            if (k + 4 >= L.length) continue;
+            const R = L[k + 4];
+            if (e2 < R * R) {
+              const Ar = L[k], Ai = L[k + 1], Br = L[k + 2], Bi = L[k + 3];
+              const nr = Ar * er - Ai * ei + Br * dr - Bi * di;
+              const ni = Ar * ei + Ai * er + Br * di + Bi * dr;
+              const ndr = Ar * dzr - Ai * dzi, ndi = Ar * dzi + Ai * dzr;
+              if (wantDE) { const t = Ar * dcr - Ai * dci + Br; dci = Ar * dci + Ai * dcr + Bi; dcr = t; }
+              er = nr; ei = ni; dzr = ndr; dzi = ndi; m += step; n += step; statSkip += step;
+              applied = true;
+              break;
+            }
+          }
+        }
+        if (!applied) {
+          const zr = Z[2 * m], zi = Z[2 * m + 1];
+          const xr = zr + er, xi = zi + ei;
+          const ndr = 2 * (xr * dzr - xi * dzi), ndi = 2 * (xr * dzi + xi * dzr);
+          if (wantDE) { const t = 2 * (xr * dcr - xi * dci) + 1; dci = 2 * (xr * dci + xi * dcr); dcr = t; }
+          const ner = 2 * (zr * er - zi * ei) + er * er - ei * ei + dr;
+          const nei = 2 * (zr * ei + zi * er) + 2 * er * ei + di;
+          er = ner; ei = nei; dzr = ndr; dzi = ndi; m++; n++;
+        }
+        const fr = Z[2 * m] + er, fi = Z[2 * m + 1] + ei, mag = fr * fr + fi * fi;
+        if (mag > 1e6) { statIters += n; if (wantDE) lastDE = deOf(mag, dcr, dci); return smooth(n, mag); }
+        const ddx = fr - sr, ddy = fi - si;
+        if (interior && ddx * ddx + ddy * ddy < 1e-12 * (sr * sr + si * si) && dzr * dzr + dzi * dzi < 0.25) { statIters += n; return -1; }
+        if (++per > perLen) { per = 0; perLen *= 2; sr = fr; si = fi; dzr = 1; dzi = 0; }
+        if (mag < er * er + ei * ei) { er = fr; ei = fi; m = 0; }
+        else if (m >= len - 1) { statIters += n; return -2; }
+      }
+      statIters += n;
+      return -1;
+    }
+
+    // ---- WebAssembly kernels (AssemblyScript, compiled with -O3) ----
+    const WASM_B64 = "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";
+    // same kernels built with 128-bit SIMD (two pixels per instruction); browsers without
+    // wasm SIMD fall back to the scalar build above
+    const WASM_SIMD_B64 = "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";
+    let wasm = null, hasSimd = false, heap = 0, loadedRef = null, loadedT = null, zOff = 0, hdrOff = 0, top = 0;
+    function instantiate(b64) {
+      const bin = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
+      if (!WebAssembly.validate(bin)) return null;
+      return new WebAssembly.Instance(new WebAssembly.Module(bin), {}).exports;
+    }
+    try { wasm = instantiate(WASM_SIMD_B64); hasSimd = !!wasm; } catch (err) { wasm = null; }
+    try { if (!wasm) wasm = instantiate(WASM_B64); } catch (err) { wasm = null; }
+    if (wasm) heap = (wasm.heapBase() + 15) & ~15;
+    const al = (x) => (x + 15) & ~15;
+    function ensureMem(bytes) {
+      const need = bytes - wasm.memory.buffer.byteLength;
+      if (need > 0) wasm.memory.grow(Math.ceil(need / 65536));
+    }
+    // Copy a reference orbit (and its BLA table) into linear memory:
+    // [Z: len x (re, im)] [header: level offsets, entry counts] [levels 1..top]
+    function layout(ref, T) {
+      if (loadedRef === ref && loadedT === T) return;
+      const levels = T ? T.levels : [];
+      top = T ? levels.length - 1 : 0;
+      zOff = heap;
+      hdrOff = al(zOff + ref.len * 16);
+      let p = al(hdrOff + 8 * (top + 1));
+      const offs = [0], counts = [0];
+      for (let l = 1; l <= top; l++) { offs.push(p); counts.push(levels[l].length / 5); p = al(p + levels[l].length * 8); }
+      ensureMem(p);
+      const buf = wasm.memory.buffer;
+      new Float64Array(buf, zOff, ref.len * 2).set(ref.Z);
+      const hdr = new Uint32Array(buf, hdrOff, 2 * (top + 1));
+      for (let l = 0; l <= top; l++) { hdr[l] = offs[l]; hdr[top + 1 + l] = counts[l]; }
+      for (let l = 1; l <= top; l++) new Float64Array(buf, offs[l], levels[l].length).set(levels[l]);
+      loadedRef = ref; loadedT = T;
+    }
+
+    // ---- strip with guessing ----
+    // grid g: samples every g pixels.
+    // tol === Infinity: smooth preview, every cell whose corners escaped is interpolated.
+    // tol = k > 0: a cell is interpolated only if some corner's distance estimate times k covers
+    //   the whole cell. By Koebe's 1/4 theorem (k = 1/4) that disk holds no point of the set, so
+    //   the potential is smooth (harmonic) there; other cells are computed pixel by pixel.
+    // Interpolation runs on the potential G = 2^-nu (nu = smooth iteration count), which is
+    // harmonic outside the set, rather than on nu itself.
+    // evaluate n points (px[i], py[i]) into v[] (and dist[] when wanted), two at a time when possible
+    function evalMany(n, px, py, v, dist, f, f2, getDE) {
+      let i = 0;
+      if (f2) for (; i + 1 < n; i += 2) f2(px[i], py[i], px[i + 1], py[i + 1], v, dist, i);
+      for (; i < n; i++) { v[i] = f(px[i], py[i]); if (dist) dist[i] = getDE(); }
+    }
+    function strip(d, f, getDE, f2) {
+      const W = d.W, H = d.H, y0 = d.y0, y1 = d.y1, g = d.grid, tol = d.tol;
+      const out = new Float32Array(W * (y1 - y0));
+      const xs = [], ys = [];
+      for (let x = 0; x < W; x += g) xs.push(x);
+      if (xs[xs.length - 1] !== W - 1) xs.push(W - 1);
+      for (let y = y0; y < y1; y += g) ys.push(y);
+      const yl = Math.min(y1, H - 1);
+      if (ys[ys.length - 1] !== yl) ys.push(yl);
+      const bx = new Float64Array(Math.max(W, 16) * 2), by = new Float64Array(bx.length), bv = new Float64Array(bx.length);
+      if (g <= 1 || xs.length < 2 || ys.length < 2) {
+        for (let y = y0; y < y1; y++) {
+          for (let x = 0; x < W; x++) { bx[x] = x; by[x] = y; }
+          evalMany(W, bx, by, bv, null, f, f2, getDE);
+          const row = (y - y0) * W;
+          for (let x = 0; x < W; x++) out[row + x] = bv[x];
+        }
+        return out;
+      }
+      const useDE = tol !== Infinity;
+      const nx = xs.length, ny = ys.length, S = new Float64Array(nx * ny), D = useDE ? new Float64Array(nx * ny) : null;
+      {
+        const n = nx * ny, px = new Float64Array(n), py = new Float64Array(n);
+        for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { px[j * nx + i] = xs[i]; py[j * nx + i] = ys[j]; }
+        evalMany(n, px, py, S, D, f, f2, getDE);
+      }
+      for (let j = 0; j < ny - 1; j++) {
+        const ya = ys[j], yb = ys[j + 1];
+        const yEnd = j === ny - 2 ? y1 : yb;           // the last cell row also covers its bottom edge
+        for (let i = 0; i < nx - 1; i++) {
+          const xa = xs[i], xb = xs[i + 1];
+          const xEnd = i === nx - 2 ? W : xb;
+          const ia = j * nx + i, ib = ia + 1, ic = ia + nx, ie = ic + 1;
+          const a = S[ia], b = S[ib], c = S[ic], e = S[ie];
+          let smoothCell = a >= 0 && b >= 0 && c >= 0 && e >= 0;
+          if (smoothCell && useDE) {
+            const diag = Math.hypot(xb - xa, yb - ya) * d.scale;
+            smoothCell = Math.max(D[ia], D[ib], D[ic], D[ie]) * tol >= diag;
+          }
+          if (smoothCell) {
+            // potential relative to the smallest corner value (2^-nu underflows for large nu)
+            const m0 = Math.min(a, b, c, e);
+            const ga = Math.pow(2, m0 - a), gb = Math.pow(2, m0 - b), gc = Math.pow(2, m0 - c), ge = Math.pow(2, m0 - e);
+            for (let y = ya; y < yEnd; y++) {
+              const fy = (y - ya) / (yb - ya), row = (y - y0) * W;
+              const l = ga + (gc - ga) * fy, r = gb + (ge - gb) * fy;
+              for (let x = xa; x < xEnd; x++) out[row + x] = m0 - Math.log2(l + (r - l) * ((x - xa) / (xb - xa)));
+            }
+          } else if (!useDE) {
+            const xm = (xa + xb) / 2, ym = (ya + yb) / 2;
+            for (let y = ya; y < yEnd; y++) {
+              const row = (y - y0) * W, upper = y < ym;
+              for (let x = xa; x < xEnd; x++) out[row + x] = upper ? (x < xm ? a : b) : (x < xm ? c : e);
+            }
+          } else {
+            let n = 0;
+            for (let y = ya; y < yEnd; y++) {
+              const row = (y - y0) * W;
+              for (let x = xa; x < xEnd; x++) {
+                if (y === ya && x === xa) out[row + x] = a;
+                else { bx[n] = x; by[n] = y; n++; }
+              }
+            }
+            evalMany(n, bx, by, bv, null, f, f2, getDE);
+            for (let k = 0; k < n; k++) out[(by[k] - y0) * W + bx[k]] = bv[k];
+          }
+        }
+      }
+      return out;
+    }
+
+    onmessage = function (e) {
+      const d = e.data;
+      if (d.type === 'orbit') { if (d.slot === 'main') mainRef = d; else fixRef = d; return; }
+      const W = d.W, H = d.H, y0 = d.y0, y1 = d.y1, old = d.old;
+      let ref = null;
+      if (d.pert) ref = (mainRef && mainRef.id === d.refId) ? mainRef : (fixRef && fixRef.id === d.refId) ? fixRef : null;
+      let T = null;
+      if (ref && d.bla) {
+        // the table's radii depend on the largest |delta| in the image; rebuild when it no longer fits
+        if (!ref.bla || d.cmax > ref.bla.cmax || d.cmax < ref.bla.cmax / 64) ref.bla = buildBLA(ref.Z, ref.len, d.cmax * 2);
+        T = ref.bla;
+      }
+      let f, f2 = null, usedWasm = false, getDE = () => lastDE;
+      const needDE = !old && d.grid > 1 && d.tol !== Infinity;
+      wantDE = needDE;
+      statIters = 0; statSkip = 0;
+      if (wasm && d.wasm && (ref || !d.pert)) {
+        if (ref) layout(ref, T);
+        wasm.setup(d.scale, d.ox, d.oy, d.absX, d.absY, d.maxIter, ref ? (T ? 2 : 1) : 0, zOff, ref ? ref.len : 0, hdrOff, top, d.interior ? 1 : 0, needDE ? 1 : 0, d.julia ? 1 : 0, d.jcr || 0, d.jci || 0);
+        wasm.resetStats();
+        f = (x, y) => wasm.pt(x + 0.5 - W / 2, y + 0.5 - H / 2);
+        getDE = () => wasm.lastDE.value;
+        usedWasm = true;
+        if (hasSimd && d.simd) {
+          const o0 = wasm.out0, o1 = wasm.out1, e0 = wasm.de0, e1 = wasm.de1, hw = W / 2, hh = H / 2;
+          f2 = (x0, y0_, x1, y1_, v, dist, i) => {
+            wasm.pt2(x0 + 0.5 - hw, y0_ + 0.5 - hh, x1 + 0.5 - hw, y1_ + 0.5 - hh);
+            v[i] = o0.value; v[i + 1] = o1.value;
+            if (dist) { dist[i] = e0.value; dist[i + 1] = e1.value; }
+          };
+        }
+      } else if (ref) {
+        f = (x, y) => ptPB((x + 0.5 - W / 2) * d.scale + d.ox, -(y + 0.5 - H / 2) * d.scale + d.oy, d.maxIter, ref.Z, ref.len, T, d.interior);
+      } else if (d.pert) {
+        f = () => -2;
+      } else if (d.julia) {
+        f = (x, y) => ptJ(d.absX + (x + 0.5 - W / 2) * d.scale, d.absY - (y + 0.5 - H / 2) * d.scale, d.jcr, d.jci, d.maxIter);
+      } else {
+        f = (x, y) => ptD(d.absX + (x + 0.5 - W / 2) * d.scale, d.absY - (y + 0.5 - H / 2) * d.scale, d.maxIter);
+      }
+      let out;
+      if (old) {
+        out = old;
+        for (let y = y0; y < y1; y++) for (let x = 0; x < W; x++) {
+          const i = (y - y0) * W + x;
+          if (out[i] === -2) out[i] = f(x, y);
+        }
+      } else out = strip(d, f, getDE, f2);
+      const iters = usedWasm ? wasm.statIters.value : statIters, skipped = usedWasm ? wasm.statSkip.value : statSkip;
+      postMessage({ gen: d.gen, y0: y0, y1: y1, buf: out, iters: iters, skipped: skipped, wasm: usedWasm, simd: !!f2 }, [out.buffer]);
+    };
+  `;
+
+  // Reference-orbit worker: z <- z^2 + c in BigInt fixed point with P fractional bits.
+  const refSrc = `
+    onmessage = function (e) {
+      const d = e.data;
+      const x = BigInt(d.x), y = BigInt(d.y), P = d.P, maxIter = d.maxIter;
+      const Pb = BigInt(P), P1 = BigInt(P - 1);
+      const sh = Math.max(0, P - 60), S = BigInt(sh), inv = Math.pow(2, -(P - sh));
+      const Z = new Float64Array(2 * (maxIter + 2));
+      let zr = 0n, zi = 0n, n = 1, escaped = false;
+      for (; n <= maxIter; n++) {
+        const nzr = ((zr * zr - zi * zi) >> Pb) + x;
+        zi = ((zr * zi) >> P1) + y;
+        zr = nzr;
+        const a = Number(zr >> S) * inv, b = Number(zi >> S) * inv;
+        Z[2 * n] = a; Z[2 * n + 1] = b;
+        if (a * a + b * b > 1e6) { escaped = true; n++; break; }
+        if ((n & 4095) === 0) postMessage({ id: d.id, progress: n / maxIter });
+      }
+      const out = Z.slice(0, 2 * n);
+      postMessage({ id: d.id, Z: out, len: n, escaped: escaped }, [out.buffer]);
+    };
+  `;
+  const workerURL = URL.createObjectURL(new Blob([workerSrc], { type: 'text/javascript' }));
+  const refURL = URL.createObjectURL(new Blob([refSrc], { type: 'text/javascript' }));
+  const NW = Math.max(2, Math.min(8, (navigator.hardwareConcurrency || 4) - 1));
+  const workers = [];
+  for (let i = 0; i < NW; i++) {
+    const w = new Worker(workerURL);
+    w.busy = false;
+    w.onmessage = (e) => onResult(w, e.data);
+    workers.push(w);
+  }
+
+  /* ================= Arbitrary precision helpers (BigInt fixed point) ================= */
+  const F64 = new Float64Array(1), U64 = new BigUint64Array(F64.buffer);
+  function dblToFixed(d, P) {
+    if (d === 0 || !isFinite(d)) return 0n;
+    F64[0] = d;
+    const bits = U64[0];
+    const neg = (bits >> 63n) === 1n;
+    const ex = Number((bits >> 52n) & 0x7ffn);
+    let mant = bits & 0xfffffffffffffn, e;
+    if (ex === 0) e = -1074; else { mant |= 1n << 52n; e = ex - 1075; }
+    const s = e + P;
+    const r = s >= 0 ? mant << BigInt(s) : mant >> BigInt(-s);
+    return neg ? -r : r;
+  }
+  function bitLen(x) { const h = x.toString(16); return (h.length - 1) * 4 + (32 - Math.clz32(parseInt(h[0], 16))); }
+  function fixedToDbl(x, P) {
+    if (x === 0n) return 0;
+    const neg = x < 0n; if (neg) x = -x;
+    const sh = bitLen(x) - 60;
+    const r = sh > 0 ? Number(x >> BigInt(sh)) * Math.pow(2, sh - P) : Number(x) * Math.pow(2, -P);
+    return neg ? -r : r;
+  }
+  function fixedToDec(x, P, digits) {
+    const neg = x < 0n; if (neg) x = -x;
+    const Pb = BigInt(P), ip = x >> Pb, frac = x - (ip << Pb);
+    const f = (frac * 10n ** BigInt(digits)) >> Pb;
+    return (neg ? '-' : '+') + ip.toString() + '.' + f.toString().padStart(digits, '0');
+  }
+  function decToFixed(s, P) {
+    const m = /^([+-]?)(\d*)(?:\.(\d*))?(?:e([+-]?\d+))?$/i.exec(s.trim());
+    if (!m || (!m[2] && !m[3])) return null;
+    const digits = (m[2] || '') + (m[3] || '');
+    const e10 = (m[4] ? parseInt(m[4], 10) : 0) - (m[3] || '').length;
+    let v = BigInt(digits || '0') << BigInt(P);
+    if (e10 >= 0) v *= 10n ** BigInt(e10); else v /= 10n ** BigInt(-e10);
+    return m[1] === '-' ? -v : v;
+  }
+
+  /* ================= Palettes ================= */
+  const PALETTES = [
+    { name: '深海と夕焼け', stops: ['#000764', '#206bcb', '#edffff', '#ffaa00', '#000200'] },
+    { name: '炎', stops: ['#050003', '#4a0612', '#b3240c', '#f2761b', '#ffd66b', '#fff7e0', '#f2761b', '#4a0612'] },
+    { name: '氷河', stops: ['#020814', '#0b2a4a', '#1f6f8b', '#8fd3d8', '#f4fbff', '#5fa8c4', '#0b2a4a'] },
+    { name: '墨と金', stops: ['#08070a', '#2b2620', '#8a6a2f', '#e9c873', '#fffaf0', '#8a6a2f', '#2b2620'] },
+    { name: '虹（色相環）', hsl: true },
+    { name: 'モノクロ', stops: ['#000000', '#ffffff'] },
+  ];
+  const LUT_N = 2048;
+  let lut = new Uint8Array(LUT_N * 3);
+  const INSIDE = [6, 7, 12];
+  function hex(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+  function buildLUT(p) {
+    const out = new Uint8Array(LUT_N * 3);
+    if (p.hsl) {
+      for (let i = 0; i < LUT_N; i++) {
+        const h = i / LUT_N * 6, c = 0.85, x = c * (1 - Math.abs(h % 2 - 1)), m = 0.12;
+        let r = 0, g = 0, b = 0;
+        if (h < 1) [r, g, b] = [c, x, 0]; else if (h < 2) [r, g, b] = [x, c, 0]; else if (h < 3) [r, g, b] = [0, c, x];
+        else if (h < 4) [r, g, b] = [0, x, c]; else if (h < 5) [r, g, b] = [x, 0, c]; else [r, g, b] = [c, 0, x];
+        out[i * 3] = (r + m) * 255; out[i * 3 + 1] = (g + m) * 255; out[i * 3 + 2] = (b + m) * 255;
+      }
+      return out;
+    }
+    const st = p.stops.map(hex), k = st.length;
+    for (let i = 0; i < LUT_N; i++) {
+      const t = i / LUT_N * k, j = Math.floor(t), f = t - j;
+      const a = st[j % k], b = st[(j + 1) % k];
+      const sf = f * f * (3 - 2 * f);
+      for (let c = 0; c < 3; c++) out[i * 3 + c] = a[c] + (b[c] - a[c]) * sf;
+    }
+    return out;
+  }
+
+  /* ================= Presets ================= */
+  const PRESETS = [
+    { name: '全体', re: '-0.6', im: '0', zoom: 1 },
+    { name: 'タツノオトシゴの谷', re: '-0.7436438870371587', im: '0.1318259042053120', zoom: 60 },
+    { name: 'ゾウの谷', re: '0.2850', im: '0.0110', zoom: 120 },
+    { name: '周期3のミニブロ（実軸上の小さなコピー）', re: '-1.7548776662466927', im: '0', zoom: 90 },
+    { name: '渦巻き（ミシュレヴィッチ点の近く）', re: '-0.77568377', im: '0.13646737', zoom: 1500 },
+    { name: '樹枝状の先端 c = i', re: '0', im: '1', zoom: 40 },
+    { name: '三重の渦', re: '-0.0880', im: '0.6540', zoom: 150 },
+  ];
+
+  /* ================= Dive destinations (computed to ~90 digits) ================= */
+  const DIVES = [
+    { name: 'c = i（枝の先端）', desc: '前周期点（ミシュレヴィッチ点）。枝分かれした同じ形が、どこまで拡大しても現れ続けます。',
+      re: '0', im: '1', end: Infinity },
+    { name: '三叉の分岐点', desc: '三本の枝が一点で出会うミシュレヴィッチ点。拡大しても三叉の形が保たれます。',
+      re: '-0.10109636384562216102578544573862256546380544282625348387693117766078084074047058427482122',
+      im: '0.956286510809141500771096057729977435809833336510529170034314321500524659065716732526978411', end: 1e85 },
+    { name: 'タツノオトシゴの渦の中心', desc: '渦巻きの中心にあるミシュレヴィッチ点。渦の中に渦が無限に続きます。',
+      re: '-0.775683768009053797469483503934741045728246504615800394794952001400666017222819589894883159',
+      im: '0.136467368294690124733274409617848765197772111592467696407800195400835665974815500875448611', end: 1e85 },
+    { name: 'ゾウの谷の渦の中心', desc: 'ゾウの鼻の渦の奥にあるミシュレヴィッチ点（48回目で不動点に乗る）。渦の中にゾウの列が続きます。',
+      re: '0.29241538173738738502175513423802143206359698623463298987951350269054799669345523589600794',
+      im: '0.0154238700055629748109519334171721942037549454884996378666150722498132071099619128794168473', end: 1e85 },
+    { name: 'ファイゲンバウム点', desc: '実軸上の周期倍分岐が集積する点。約4.67倍ごとに似た景色が繰り返されます。発散までの反復回数が倍率の0.46乗で増えて重くなるので、10⁸倍で止めます。',
+      re: '-1.4011551890920506005237729628', im: '0', end: 1e8, iterPow: 0.46 },
+    { name: 'タツノオトシゴの谷のミニブロ', desc: '周期998の小さなマンデルブロ集合。約10¹⁵倍で画面の中央に収まります。',
+      re: '-0.7436438870371588707780645434936425750476099623212550602138874474033224404448494804306928',
+      im: '0.131825904205312292821097354874767265262988599679042974937476351239070314316971786617199063', end: 9.6e14, period: 998 },
+    { name: '渦の奥の極小ミニブロ', desc: 'タツノオトシゴの渦の中心から10⁻⁴²だけずれた所にある周期2288のコピー。約10⁸⁰倍で到着します（深いので数分かかります）。',
+      re: '-0.775683768009053797469483503934741045728220975848406541031222998345005309334156230126209135',
+      im: '0.136467368294690124733274409617848765197764930699273757038258544571569905809469720662121643', end: 4.2e80, period: 2288 },
+  ];
+
+  /* ================= State ================= */
+  const canvas = $('view');
+  const ctx = canvas.getContext('2d');
+  let W = 0, H = 0, DPR = 1;
+  // The view centre is anchor (BigInt, P fractional bits) + (view.cx, view.cy) (small doubles).
+  // Every stored position (view, base picture, targets) is an offset from the anchor,
+  // and the anchor is moved to the view centre at the start of each render.
+  let P = 128;
+  const anchor = { x: dblToFixed(-0.6, 128), y: 0n };
+  const anchorD = { x: -0.6, y: 0 };
+  const view = { cx: 0, cy: 0, scale: 0.01 };
+  let base = document.createElement('canvas'), bctx = base.getContext('2d');
+  let spare = document.createElement('canvas'), sctx = spare.getContext('2d');
+  let baseView = null;
+  let vals = new Float32Array(1);
+  let gen = 0, queue = [], outstanding = 0, passes = [1], passIdx = 0, renderBusy = false, phase = 'idle';
+  let renderParams = null, renderStart = 0, lastRenderMs = 0, doneStrips = 0, totalStrips = 0;
+  let dirty = true, renderTimer = 0;
+  let density = Math.pow(10, -2.5 / 2), iterMult = 1, speed = 1.2;
+  let autozoom = false, mode = 'tour', target = null, limitHit = false;
+  let lastRetargetScale = 0, retargetStep = 0.5, lastStep = 1;
+  let dblOnly = false;
+  let mainRef = null, refHint = null, fixRound = 0, glitchCount = 0, lastRef = null;
+  let anim = null, doneScale = 0;
+  let effSpeed = 0, renderEma = 0;
+  let useWasm = typeof WebAssembly === 'object', wasmUsed = false;
+  let quality = 'std', useInterior = false, useSimd = true, simdUsed = false;
+  try {
+    const q = localStorage.getItem('mb.quality');
+    if (q === 'exact' || q === 'std' || q === 'lite') quality = q;
+    else if (window.matchMedia('(max-width: 640px)').matches || (navigator.hardwareConcurrency || 4) <= 4) quality = 'lite';
+  } catch (_) {}
+  let useBla = true, statIters = 0, statSkip = 0, lastSkipFrac = -1, lastPertMs = 0;
+  let dive = null, diveIdx = -1, iterFloor = 0, iterPow = 0, returning = false;
+  // Julia mode: c is fixed (taken from the Mandelbrot view centre) and the view is the z-plane.
+  // Rendered in plain double precision, so it stops at the double limit (~10^13).
+  let julia = null;            // { cr, ci, reStr, imStr } while in Julia mode
+  let savedMandel = null;      // Mandelbrot view to come back to
+  const DEEP_ZOOM = 1e10;
+  const MIN_SCALE = 1e-290;
+
+  const refScale = () => 3 / Math.min(W, H);
+  const zoomOf = () => refScale() / view.scale;
+  function maxIterFor(zoom) {
+    const L = Math.max(0, Math.log10(zoom));
+    // some destinations need far more iterations than the generic rule (e.g. near the Feigenbaum
+    // point escape takes ~ zoom^0.46 iterations); iterPow scales the limit with that growth
+    const powRule = iterPow ? 20 * Math.pow(Math.max(1, zoom), iterPow) : 0;
+    return Math.round(iterMult * Math.max(120 + 60 * Math.pow(L, 1.6), iterFloor, powRule));
+  }
+  function doubleLimitScale() {
+    return 2.2e-16 * Math.max(Math.abs(anchorD.x + view.cx), Math.abs(anchorD.y + view.cy), 1e-3) * 6;
+  }
+  function stopScale() { return dblOnly || julia ? doubleLimitScale() : MIN_SCALE; }
+
+  function setAnchorD() { anchorD.x = fixedToDbl(anchor.x, P); anchorD.y = fixedToDbl(anchor.y, P); }
+  function ensurePrecision() {
+    const need = Math.ceil(-Math.log2(view.scale)) + 64;
+    if (need > P) {
+      const add = need + 64 - P;
+      anchor.x <<= BigInt(add); anchor.y <<= BigInt(add); P += add;
+    }
+  }
+  function rebaseAnchor() {
+    ensurePrecision();
+    const sx = view.cx, sy = view.cy;
+    if (sx === 0 && sy === 0) return;
+    anchor.x += dblToFixed(sx, P); anchor.y += dblToFixed(sy, P);
+    view.cx = 0; view.cy = 0;
+    for (const o of [baseView, target, refHint]) if (o) { o.cx -= sx; o.cy -= sy; }
+    setAnchorD();
+  }
+  function refOffset(r) {
+    const d = P - r.P;
+    const rx = d >= 0 ? r.x << BigInt(d) : r.x >> BigInt(-d);
+    const ry = d >= 0 ? r.y << BigInt(d) : r.y >> BigInt(-d);
+    return { x: fixedToDbl(rx - anchor.x, P), y: fixedToDbl(ry - anchor.y, P) };
+  }
+  function diveOffset() {
+    const d = P - dive.P;
+    const dx = d >= 0 ? dive.x << BigInt(d) : dive.x >> BigInt(-d);
+    const dy = d >= 0 ? dive.y << BigInt(d) : dive.y >> BigInt(-d);
+    return { cx: fixedToDbl(dx - anchor.x, P), cy: fixedToDbl(dy - anchor.y, P) };
+  }
+  function goTo(x, y, zoom, Pin) {
+    view.scale = refScale() / zoom;
+    P = Pin; anchor.x = x; anchor.y = y;
+    ensurePrecision();
+    view.cx = view.cy = 0;
+    target = null; refHint = null; mainRef = null; limitHit = false;
+    baseView = null; doneScale = 0; iterFloor = 0; iterPow = 0; renderEma = 0;
+    setAnchorD();
+    requestRender(0);
+  }
+  function goToStrings(re, im, zoom) {
+    if (!(zoom > 0) || !isFinite(zoom)) return false;
+    const digits = Math.max(re.length, im.length);
+    const Pin = Math.max(128, Math.ceil(digits * 3.33) + 64, Math.ceil(Math.log2(zoom)) + 140);
+    const x = decToFixed(re, Pin), y = decToFixed(im, Pin);
+    if (x === null || y === null) return false;
+    goTo(x, y, zoom, Pin);
+    return true;
+  }
+
+  function enterJulia() {
+    if (julia) return;
+    setAuto(false); endDive();
+    savedMandel = { x: anchor.x + dblToFixed(view.cx, P), y: anchor.y + dblToFixed(view.cy, P), P, zoom: zoomOf(), mode };
+    // c is used in double precision; write it with all 17 significant digits
+    const cr = anchorD.x + view.cx, ci = anchorD.y + view.cy;
+    const fmt = (v) => (v >= 0 ? '+' : '') + v.toPrecision(17).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+    julia = { cr, ci, reStr: fmt(cr), imStr: fmt(ci) };
+    target = null;
+    goToStrings('0', '0', 0.9);
+    syncSetKind();
+  }
+  function leaveJulia(restore) {
+    if (!julia) return;
+    setAuto(false);
+    julia = null;
+    if (restore && savedMandel) goTo(savedMandel.x, savedMandel.y, savedMandel.zoom, savedMandel.P);
+    savedMandel = null;
+    syncSetKind();
+  }
+  function syncSetKind() {
+    $('kind-m').setAttribute('aria-pressed', String(!julia));
+    $('kind-j').setAttribute('aria-pressed', String(!!julia));
+    $('cRow').hidden = !julia;
+    if (julia) {
+      const short2 = (s) => s.length > 22 ? s.slice(0, 20) + '…' : s;
+      $('cOut').textContent = `${short2(julia.reStr)} ${julia.imStr.startsWith('-') ? '−' : '+'} ${short2(julia.imStr.replace(/^[+-]/, ''))}i`;
+    }
+    document.body.classList.toggle('is-julia', !!julia);
+    $('destJuliaNote').hidden = !julia;
+    $('kindNote').textContent = julia
+      ? '「マンデルブロ集合」を押すと、c を選んだ場所に戻ります。'
+      : 'ジュリア集合は、今の画面中心の c を使って描きます。';
+  }
+
+  /* ================= Sizing ================= */
+  function resize(force) {
+    const z = W ? zoomOf() : 1;
+    DPR = Math.min(window.devicePixelRatio || 1, 2) * (quality === 'lite' ? 0.5 : 1);
+    const r = canvas.getBoundingClientRect();
+    const nW = Math.max(1, Math.round(r.width * DPR)), nH = Math.max(1, Math.round(r.height * DPR));
+    if (force !== true && nW === W && nH === H) return;
+    W = nW; H = nH;
+    canvas.width = W; canvas.height = H;
+    base.width = spare.width = W; base.height = spare.height = H;
+    vals = new Float32Array(W * H);
+    view.scale = refScale() / z;
+    baseView = null;
+    requestRender(0);
+  }
+
+  /* ================= Rendering ================= */
+  function drawBase(c) {
+    c.fillStyle = `rgb(${INSIDE})`;
+    c.fillRect(0, 0, W, H);
+    if (!baseView) return;
+    const k = baseView.scale / view.scale;
+    const dx = -W / 2 * k + (baseView.cx - view.cx) / view.scale + W / 2;
+    const dy = -H / 2 * k - (baseView.cy - view.cy) / view.scale + H / 2;
+    c.imageSmoothingEnabled = k < 1;
+    c.drawImage(base, dx, dy, W * k, H * k);
+  }
+  function startRender() {
+    rebaseAnchor();
+    drawBase(sctx);
+    [base, spare] = [spare, base];
+    [bctx, sctx] = [sctx, bctx];
+    baseView = { cx: 0, cy: 0, scale: view.scale };
+    gen++;
+    const zoom = zoomOf();
+    // perturbation + BLA also pays off at shallow zoom when the iteration limit is huge
+    const pert = !julia && !dblOnly && (zoom >= DEEP_ZOOM || (zoom >= 1e3 && maxIterFor(zoom) > 20000));
+    renderParams = { cx: 0, cy: 0, absX: anchorD.x, absY: anchorD.y, scale: view.scale, maxIter: maxIterFor(zoom), pert, refId: 0, ox: 0, oy: 0, wasm: useWasm, simd: useSimd, interior: useInterior,
+      julia: !!julia, jcr: julia ? julia.cr : 0, jci: julia ? julia.ci : 0 };
+    const quick = autozoom || anim;
+    // a pass = sample grid + interpolation tolerance (in palette cycles; Infinity = interpolate all)
+    const qg = pert ? (DPR >= 2 ? 3 : 2) : (DPR >= 2 || W * H > 2.5e6 ? 2 : 1);
+    // final pass: interpolate a cell when (distance estimate x factor) covers it. 1/4 would be Koebe's
+    // guaranteed bound but leaves almost nothing to interpolate when deep; 1 measured as visually
+    // lossless at about 2x. At shallow zoom (plain double) the extra derivative costs more than it saves.
+    let finalTol = { exact: 0, std: 1, lite: 4 }[quality];
+    if (!pert && quality === 'std') finalTol = 0;
+    // while zooming: one coarse pass. When paused: preview, then progressively finer passes
+    // (lite: x4 then x1, so a paused lite view still sharpens to the standard result).
+    passes = quick ? [{ grid: quality === 'lite' ? qg + 1 : qg, tol: Infinity }]
+      : [{ grid: 4, tol: Infinity }, finalTol ? { grid: 4, tol: finalTol } : { grid: 1, tol: 0 }];
+    if (!quick && quality === 'lite' && pert) passes.push({ grid: 4, tol: 1 });
+    renderParams.dens = density;
+    passIdx = 0;
+    renderBusy = true;
+    renderStart = performance.now();
+    doneStrips = 0; totalStrips = 0;
+    for (const ps of passes) totalStrips += Math.ceil(H / stripRows(ps.grid));
+    fixRound = 0; glitchCount = 0;
+    statIters = 0; statSkip = 0;
+    queue = []; outstanding = 0;
+    if (!pert) { phase = 'pass'; enqueuePass(); return; }
+
+    const need = Math.ceil(-Math.log2(view.scale)) + 40;
+    const r = mainRef;
+    if (r && r.P >= need) {
+      const o = refOffset(r);
+      const dist = Math.max(Math.abs(o.x) / (W * view.scale), Math.abs(o.y) / (H * view.scale));
+      const ok = r.escaped ? dist < 1 : (r.len - 1 >= renderParams.maxIter && dist < 50);
+      if (ok) { useRef(r, o); return; }
+    }
+    phase = 'ref';
+    if (dive) { const o = diveOffset(); if (Math.abs(o.cx) < W * view.scale && Math.abs(o.cy) < H * view.scale) refHint = o; }
+    const h = refHint && Math.abs(refHint.cx) < W * view.scale && Math.abs(refHint.cy) < H * view.scale ? refHint : { cx: 0, cy: 0 };
+    const myGen = gen;
+    requestRef(h.cx, h.cy, Math.ceil(renderParams.maxIter * 1.5), 'main', (nr) => {
+      mainRef = nr;
+      if (myGen === gen) useRef(nr, refOffset(nr));
+    });
+  }
+  function useRef(r, o) {
+    renderParams.refId = r.id;
+    renderParams.ox = renderParams.cx - o.x;
+    renderParams.oy = renderParams.cy - o.y;
+    renderParams.bla = useBla;
+    renderParams.cmax = Math.hypot(Math.abs(renderParams.ox) + W / 2 * view.scale, Math.abs(renderParams.oy) + H / 2 * view.scale);
+    lastRef = r;
+    phase = 'pass';
+    enqueuePass();
+  }
+  function stripRows(g) { return g >= 4 ? 32 : g === 3 ? 24 : 16; }
+  function enqueuePass() {
+    const ps = passes[passIdx];
+    const rows = stripRows(ps.grid);
+    const strips = [];
+    for (let y = 0; y < H; y += rows) strips.push([y, Math.min(H, y + rows)]);
+    strips.sort((a, b) => Math.abs(a[0] + rows / 2 - H / 2) - Math.abs(b[0] + rows / 2 - H / 2));
+    queue = strips.map(([y0, y1]) => ({ ...renderParams, gen, W, H, y0, y1, grid: ps.grid, tol: ps.tol }));
+    outstanding = queue.length;
+    pump();
+  }
+  function pump() {
+    for (const w of workers) {
+      if (!queue.length) break;
+      if (!w.busy) { w.busy = true; w.postMessage(queue.shift()); }
+    }
+  }
+  function onResult(w, d) {
+    w.busy = false;
+    if (d.gen === gen) {
+      statIters += d.iters || 0; statSkip += d.skipped || 0;
+      wasmUsed = !!d.wasm; simdUsed = !!d.simd;
+      vals.set(d.buf, d.y0 * W);
+      colorRows(d.y0, d.y1);
+      outstanding--;
+      if (phase === 'pass') doneStrips++;
+      if (outstanding === 0) {
+        if (phase === 'pass') {
+          passIdx++;
+          if (passIdx < passes.length) enqueuePass(); else afterPasses();
+        } else if (phase === 'fix') afterPasses();
+      }
+    }
+    pump();
+  }
+  // Glitch correction: pixels whose reference ran out are recomputed
+  // against a new reference placed on one of them.
+  function afterPasses() {
+    if (!renderParams.pert) return finishRender();
+    const n = W * H;
+    let cnt = 0, gi = -1, bestD = Infinity;
+    for (let i = 0; i < n; i++) {
+      if (vals[i] === -2) {
+        cnt++;
+        const x = i % W, y = (i - x) / W;
+        const dd = (x - W / 2) ** 2 + (y - H / 2) ** 2;
+        if (dd < bestD) { bestD = dd; gi = i; }
+      }
+    }
+    glitchCount = cnt;
+    if (cnt === 0 || fixRound >= 6) {
+      if (cnt) { for (let i = 0; i < n; i++) if (vals[i] === -2) vals[i] = -1; colorRows(0, H); }
+      return finishRender();
+    }
+    fixRound++;
+    phase = 'ref';
+    const x = gi % W, y = (gi - x) / W;
+    const offX = renderParams.cx + (x + 0.5 - W / 2) * renderParams.scale;
+    const offY = renderParams.cy - (y + 0.5 - H / 2) * renderParams.scale;
+    const myGen = gen;
+    requestRef(offX, offY, renderParams.maxIter, 'fix', (r) => {
+      if (myGen !== gen) return;
+      phase = 'fix';
+      const jobs = [];
+      for (let y0 = 0; y0 < H; y0 += 16) {
+        const y1 = Math.min(H, y0 + 16);
+        const seg = vals.subarray(y0 * W, y1 * W);
+        if (seg.includes(-2)) {
+          const ox = renderParams.cx - offX, oy = renderParams.cy - offY;
+          jobs.push({ ...renderParams, gen, W, H, y0, y1, grid: 1, tol: 0, refId: r.id, ox, oy,
+            cmax: Math.hypot(Math.abs(ox) + W / 2 * renderParams.scale, Math.abs(oy) + H / 2 * renderParams.scale),
+            old: seg.slice() });
+        }
+      }
+      queue = jobs; outstanding = jobs.length;
+      if (!jobs.length) return finishRender();
+      pump();
+    });
+  }
+  function colorRows(y0, y1) {
+    const im = bctx.createImageData(W, y1 - y0);
+    const px = im.data;
+    const off = y0 * W, n = (y1 - y0) * W;
+    for (let i = 0; i < n; i++) {
+      const v = vals[off + i], p = i * 4;
+      if (v < 0) { px[p] = INSIDE[0]; px[p + 1] = INSIDE[1]; px[p + 2] = INSIDE[2]; }
+      else {
+        let t = Math.sqrt(v) * density;
+        t -= Math.floor(t);
+        const j = ((t * LUT_N) | 0) * 3;
+        px[p] = lut[j]; px[p + 1] = lut[j + 1]; px[p + 2] = lut[j + 2];
+      }
+      px[p + 3] = 255;
+    }
+    bctx.putImageData(im, 0, y0);
+  }
+  function finishRender() {
+    phase = 'idle';
+    renderBusy = false;
+    lastRenderMs = performance.now() - renderStart;
+    lastStep = passes[passes.length - 1].grid === 1 || passes[passes.length - 1].tol !== Infinity ? 1 : passes[passes.length - 1].grid;
+    doneScale = baseView.scale;
+    if (renderParams.pert) { lastSkipFrac = renderParams.bla && statIters ? statSkip / statIters : -1; lastPertMs = lastRenderMs; }
+    if (autozoom && passes.length === 1) renderEma = renderEma ? renderEma * 0.6 + lastRenderMs * 0.4 : lastRenderMs;
+    computeRefHint();
+    if (autozoom && !dive) retarget();
+  }
+  // Best next reference: the deepest pixel near the centre (an interior pixel if any,
+  // since its orbit never escapes).
+  function computeRefHint() {
+    const x0 = (W * 0.25) | 0, x1 = (W * 0.75) | 0, y0 = (H * 0.25) | 0, y1 = (H * 0.75) | 0;
+    let bx = -1, by = -1, bv = -Infinity, bd = Infinity;
+    for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 2) {
+      const v0 = vals[y * W + x];
+      const v = v0 < 0 ? Infinity : v0;
+      const d = (x - W / 2) ** 2 + (y - H / 2) ** 2;
+      if (v > bv || (v === bv && d < bd)) { bv = v; bd = d; bx = x; by = y; }
+    }
+    if (bx >= 0) refHint = { cx: baseView.cx + (bx + 0.5 - W / 2) * baseView.scale, cy: baseView.cy - (by + 0.5 - H / 2) * baseView.scale };
+  }
+  function recolor() {
+    if (renderBusy || !baseView) { requestRender(0); return; }
+    if (baseView.cx === view.cx && baseView.cy === view.cy && baseView.scale === view.scale) colorRows(0, H);
+    else requestRender(0);
+  }
+  function requestRender(delay) {
+    clearTimeout(renderTimer);
+    if (!delay) { dirty = true; return; }
+    renderTimer = setTimeout(() => { dirty = true; }, delay);
+  }
+
+  /* ================= Reference orbits ================= */
+  let refWorker = null, refPending = null, refSeq = 0, refProgress = 0;
+  function newRefWorker() { refWorker = new Worker(refURL); refWorker.onmessage = onRefMessage; }
+  newRefWorker();
+  function requestRef(offX, offY, maxIter, slot, cb) {
+    if (refPending) { refWorker.terminate(); newRefWorker(); }
+    const id = ++refSeq;
+    const x = anchor.x + dblToFixed(offX, P), y = anchor.y + dblToFixed(offY, P);
+    refPending = { id, slot, cb, x, y, P, maxIter, t0: performance.now() };
+    refProgress = 0;
+    refWorker.postMessage({ id, x: x.toString(), y: y.toString(), P, maxIter });
+  }
+  function onRefMessage(e) {
+    const d = e.data;
+    if (!refPending || d.id !== refPending.id) return;
+    if (d.progress !== undefined) { refProgress = d.progress; return; }
+    const p = refPending; refPending = null;
+    const r = { id: p.id, x: p.x, y: p.y, P: p.P, maxIter: p.maxIter, len: d.len, escaped: d.escaped, ms: performance.now() - p.t0 };
+    for (const w of workers) w.postMessage({ type: 'orbit', slot: p.slot, id: p.id, Z: d.Z, len: d.len });
+    if (p.slot === 'fix') lastRef = lastRef || r;
+    p.cb(r);
+  }
+
+  /* ================= Targets ================= */
+  function pickTarget() {
+    if (!baseView) return;
+    const x0 = Math.floor(W * 0.3), x1 = Math.ceil(W * 0.7), y0 = Math.floor(H * 0.3), y1 = Math.ceil(H * 0.7);
+    let maxV = -1;
+    for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 2) {
+      const v = vals[y * W + x]; if (v > maxV) maxV = v;
+    }
+    if (maxV <= 0) { target = null; return; }
+    const thr = maxV * 0.97;
+    let best = null, bestD = Infinity;
+    for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 2) {
+      const v = vals[y * W + x];
+      if (v >= thr) {
+        const d = (x - W / 2) ** 2 + (y - H / 2) ** 2;
+        if (d < bestD) { bestD = d; best = [x, y]; }
+      }
+    }
+    if (!best) return;
+    target = { cx: baseView.cx + (best[0] + 0.5 - W / 2) * baseView.scale, cy: baseView.cy - (best[1] + 0.5 - H / 2) * baseView.scale };
+  }
+  function randomTarget() {
+    const sd = 0.15 * Math.min(W, H);
+    const u = Math.random() || 1e-9, v = Math.random();
+    const r = Math.sqrt(-2 * Math.log(u));
+    const px = Math.min(W - 1, Math.max(0, W / 2 + r * Math.cos(2 * Math.PI * v) * sd));
+    const py = Math.min(H - 1, Math.max(0, H / 2 + r * Math.sin(2 * Math.PI * v) * sd));
+    target = { cx: view.cx + (px - W / 2) * view.scale, cy: view.cy - (py - H / 2) * view.scale };
+    lastRetargetScale = view.scale;
+  }
+  function retarget() {
+    if (mode === 'slow') { pickTarget(); return; }
+    if (mode !== 'tour') return;
+    if (!target) { randomTarget(); return; }
+    if (baseView.scale > lastRetargetScale / Math.pow(2, retargetStep)) return;
+    pickGradientTarget();
+    lastRetargetScale = baseView.scale;
+  }
+  function pickGradientTarget() {
+    const fill = renderParams ? renderParams.maxIter : 1000;
+    const D = Math.max(1, lastStep);
+    const val = (i) => { const v = vals[i]; return v < 0 ? fill : v; };
+    const grad = (x, y) => { const i = y * W + x, c = val(i); return Math.abs(val(i + D) - c) + Math.abs(val(i + D * W) - c); };
+    const xMax = W - 1 - D, yMax = H - 1 - D;
+    if (xMax < 1 || yMax < 1) return;
+    const sample = new Float32Array(4000);
+    for (let k = 0; k < sample.length; k++) sample[k] = grad(Math.floor(Math.random() * xMax), Math.floor(Math.random() * yMax));
+    sample.sort();
+    const thr = Math.max(sample[Math.floor(sample.length * 0.99)], 1e-6);
+    const tpx = (target.cx - baseView.cx) / baseView.scale + W / 2;
+    const tpy = -(target.cy - baseView.cy) / baseView.scale + H / 2;
+    let best = null, bestD = Infinity;
+    for (let y = 0; y < yMax; y += D) for (let x = 0; x < xMax; x += D) {
+      if (grad(x, y) >= thr) {
+        const d = (x - tpx) ** 2 + (y - tpy) ** 2;
+        if (d < bestD) { bestD = d; best = [x, y]; }
+      }
+    }
+    if (!best) return;
+    target = { cx: baseView.cx + (best[0] + 0.5 - W / 2) * baseView.scale, cy: baseView.cy - (best[1] + 0.5 - H / 2) * baseView.scale };
+  }
+
+  /* ================= View manipulation ================= */
+  function zoomAtPx(px, py, f) {
+    const c0x = view.cx + (px - W / 2) * view.scale;
+    const c0y = view.cy - (py - H / 2) * view.scale;
+    let s = view.scale * f;
+    s = Math.min(s, refScale() * 3);
+    s = Math.max(s, 1e-300);
+    view.scale = s;
+    view.cx = c0x - (px - W / 2) * s;
+    view.cy = c0y + (py - H / 2) * s;
+  }
+
+  /* ================= Adaptive zoom speed =================
+     Instead of zooming at a fixed rate and freezing when the renderer falls
+     behind, estimate the rate the renderer can sustain (about 0.6 doublings per
+     render, from a moving average of render times) and ease toward it. A soft
+     brake scales the rate down as the view gets ahead of the last finished
+     picture, so there is never a hard stop. */
+  function zoomFactor(dt) {
+    const ahead = doneScale ? Math.log2(doneScale / view.scale) : 0;   // doublings ahead of the last picture
+    const sustainable = renderEma > 0 ? 0.6 / (renderEma / 1000) : Infinity;
+    const brake = Math.min(1, Math.max(0, (3 - ahead) / 1.5));
+    const goal = Math.min(speed, sustainable) * brake;
+    const tau = goal < effSpeed ? 0.9 : 1.5;                             // slow down a bit faster than speeding up
+    effSpeed += (goal - effSpeed) * (1 - Math.exp(-dt / tau));
+    return Math.pow(2, -dt * effSpeed);
+  }
+
+  // If the target is off screen (the viewer looked around while paused), zoom out and glide
+  // toward it until it is back near the centre, then the normal zoom resumes. Returns true
+  // while it is doing that.
+  function returnToTarget(dt) {
+    const dx = (target.cx - view.cx) / (W * view.scale), dy = (target.cy - view.cy) / (H * view.scale);
+    const far = Math.max(Math.abs(dx), Math.abs(dy));
+    if (far < 0.35) { returning = false; return false; }
+    if (!returning && far < 0.6) return false;
+    returning = true;
+    const a = 1 - Math.exp(-dt * 3);
+    view.cx += (target.cx - view.cx) * a;
+    view.cy += (target.cy - view.cy) * a;
+    if (far > 0.5) view.scale = Math.min(view.scale * Math.pow(2, dt * 3), refScale() * 3);
+    effSpeed = 0;
+    if (!renderBusy) dirty = true;
+    return true;
+  }
+
+  /* ================= Main loop ================= */
+  let lastT = performance.now();
+  function frame(t) {
+    const dt = Math.min(0.1, (t - lastT) / 1000);
+    lastT = t;
+
+    if (anim) {
+      const p = Math.min(1, (t - anim.t0) / anim.dur);
+      const e = 1 - Math.pow(1 - p, 3);
+      zoomAtPx(anim.px, anim.py, Math.exp((e - anim.done) * anim.logF));
+      anim.done = e;
+      if (p >= 1) { anim = null; requestRender(0); }
+    }
+
+    if (autozoom) {
+      if (view.scale <= stopScale()) {
+        setAuto(false);
+        limitHit = true;
+      } else if (dive) {
+        target = diveOffset();
+        if (returnToTarget(dt)) {
+          // the view was moved away while paused: zoom out and head back first
+        } else if (zoomOf() >= dive.end) {
+          arrived();
+        } else {
+          const px = (target.cx - view.cx) / view.scale + W / 2;
+          const py = -(target.cy - view.cy) / view.scale + H / 2;
+          zoomAtPx(px, py, zoomFactor(dt));
+          const a = 1 - Math.exp(-dt * 2.5);
+          view.cx += (target.cx - view.cx) * a;
+          view.cy += (target.cy - view.cy) * a;
+          if (!renderBusy) dirty = true;
+        }
+      } else if (mode !== 'straight' && target && returnToTarget(dt)) {
+        // heading back to the tour's target after looking around
+      } else {
+        view.scale *= zoomFactor(dt);
+        if (mode !== 'straight' && target) {
+          const a = 1 - Math.exp(-dt * 2.2);
+          view.cx += (target.cx - view.cx) * a;
+          view.cy += (target.cy - view.cy) * a;
+        }
+        if (!renderBusy) dirty = true;
+      }
+    }
+
+    if (dirty && W) { dirty = false; startRender(); }
+
+    drawBase(ctx);
+
+    if ((dive || mode !== 'straight') && autozoom && target) {
+      const px = (target.cx - view.cx) / view.scale + W / 2;
+      const py = -(target.cy - view.cy) / view.scale + H / 2;
+      const r = 9 * DPR;
+      ctx.save();
+      ctx.lineWidth = 1.5 * DPR;
+      ctx.strokeStyle = 'rgba(240,178,71,0.95)';
+      ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(px - r * 1.8, py); ctx.lineTo(px - r * 0.6, py);
+      ctx.moveTo(px + r * 0.6, py); ctx.lineTo(px + r * 1.8, py);
+      ctx.moveTo(px, py - r * 1.8); ctx.lineTo(px, py - r * 0.6);
+      ctx.moveTo(px, py + r * 0.6); ctx.lineTo(px, py + r * 1.8);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    updateHud();
+    requestAnimationFrame(frame);
+  }
+
+  /* ================= HUD ================= */
+  let hudTick = 0;
+  function fmtZoom(z) {
+    if (z < 1000) return '×' + (z < 10 ? z.toFixed(2) : z.toFixed(0));
+    const e = Math.floor(Math.log10(z));
+    return `×${(z / Math.pow(10, e)).toFixed(2)} × 10<sup>${e}</sup>`;
+  }
+  function coordDigits() { return Math.max(4, Math.ceil(-Math.log10(view.scale)) + 1); }
+  function currentCoords() {
+    const digits = coordDigits();
+    return {
+      re: fixedToDec(anchor.x + dblToFixed(view.cx, P), P, digits),
+      im: fixedToDec(anchor.y + dblToFixed(view.cy, P), P, digits),
+      digits,
+    };
+  }
+  const short = (s) => s.length > 30 ? s.slice(0, 28) + '…' : s;
+  function setText(el, s) { if (el.textContent !== s) el.textContent = s; }
+  function updateHud() {
+    if ((hudTick++ & 3) !== 0) return;
+    const z = zoomOf();
+    $('zoomOut').innerHTML = fmtZoom(z);
+    const c = currentCoords();
+    setText($('reOut'), short(c.re));
+    setText($('imOut'), short(c.im));
+    setText($('iterOut'), maxIterFor(z).toLocaleString('ja-JP'));
+
+    const pert = renderParams && renderParams.pert;
+    const wtag = wasmUsed ? (simdUsed ? '・WASM+SIMD' : '・WASM') : '・JS';
+    setText($('engHud'), (pert ? `摂動論${useBla ? '＋BLA' : ''}・${P} bit（小数 ${c.digits} 桁）` : 'double') + wtag);
+
+    let st;
+    if (phase === 'ref') st = `${fixRound ? `グリッチ修正 ${fixRound}回目・` : ''}参照軌道を計算中 ${Math.round(refProgress * 100)}%`;
+    else if (phase === 'fix') st = `グリッチ修正 ${fixRound}回目`;
+    else if (renderBusy) st = `描画中 ${Math.round(doneStrips / Math.max(1, totalStrips) * 100)}%`;
+    else st = `完了 ${Math.round(lastRenderMs)} ms・${NW}スレッド`;
+    if (autozoom && dive) st = `「${dive.name}」へダイブ中・` + st;
+    else if (autozoom) st = ({ tour: 'ツアー中・', slow: '境界を追跡中・', straight: '自動ズーム中・' })[mode] + st;
+    if (autozoom) st += `・毎秒 ×${Math.pow(2, effSpeed).toFixed(2)}`;
+    if (!autozoom && !renderBusy && (dive || (mode !== 'straight' && target))) st = '一時停止中・' + st;
+    setText($('status'), st);
+    autoLabel();
+
+    // progress toward the stopping depth
+    const lim = stopScale();
+    const total = Math.log10(refScale() / lim);
+    const frac = Math.max(0, Math.min(1, Math.log10(Math.max(1, z)) / total));
+    $('precBar').style.width = (frac * 100).toFixed(1) + '%';
+    const left = Math.log10(view.scale / lim);
+    setText($('engineOut'), julia ? 'ジュリア・double' : dblOnly ? 'doubleのみ' : pert ? (useBla ? '摂動論＋BLA' : '摂動論') : 'double');
+
+    let note, warn = false;
+    if (julia) {
+      note = left <= 0
+        ? 'ジュリア集合はdouble精度で計算しているため、ここが限界です（約10¹³倍）。'
+        : `ジュリア集合（c を固定し、初期値 z₀ を画面の位置にする）を double で計算しています。限界まであと約 10^${left.toFixed(1)} 倍です。`;
+      warn = left <= 0;
+    } else if (dblOnly) {
+      if (left <= 0) { warn = true; note = 'double精度の限界を超えました。隣り合うピクセルの座標差を64bit浮動小数点で表せないため、画像がブロック状に崩れています。チェックを外すと摂動論で描き直します。'; }
+      else note = `doubleだけで計算しています。限界まであと約 10^${left.toFixed(1)} 倍です。`;
+    } else if (limitHit || left <= 0) {
+      warn = true;
+      note = 'doubleの指数部の限界（約10⁻³⁰⁸）が近いため止めました。さらに先へ進むには、仮数と指数を別々に持つ拡張浮動小数点が必要です。';
+    } else if (pert && lastRef) {
+      note = `参照点1つの軌道を ${lastRef.P} bit の多倍長整数で ${(lastRef.len - 1).toLocaleString('ja-JP')} 回反復し（${Math.round(lastRef.ms)} ms）、各ピクセルは参照軌道との差だけを double で計算しています。` +
+        (lastSkipFrac >= 0 ? ` BLAで反復の ${(lastSkipFrac * 100).toFixed(1)}% をまとめて飛ばしました（1枚 ${Math.round(lastPertMs)} ms）。` : (useBla ? '' : ` BLAはオフです（1枚 ${Math.round(lastPertMs)} ms）。`)) +
+        (glitchCount ? ` 直近の描画では ${glitchCount.toLocaleString('ja-JP')} 画素のグリッチを別の参照点で計算し直しました。` : '') +
+        ` 停止する深さまであと約 10^${left.toFixed(0)} 倍。`;
+    } else if (pert) {
+      note = '摂動論に切り替えました。参照軌道を計算しています。';
+    } else {
+      note = `今は double で直接計算しています。倍率が 10¹⁰ を超えると、多倍長の参照軌道を使う摂動論に自動で切り替わります（最大で約 10^${(Math.log10(refScale() / MIN_SCALE)).toFixed(0)} 倍）。`;
+    }
+    const pn = $('precNote');
+    setText(pn, note);
+    pn.classList.toggle('warn', warn);
+  }
+
+  /* ================= Input ================= */
+  const pointers = new Map();
+  let pinch = null;
+  function localPx(e) {
+    const r = canvas.getBoundingClientRect();
+    return [(e.clientX - r.left) * DPR, (e.clientY - r.top) * DPR];
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    canvas.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, localPx(e));
+    canvas.classList.add('dragging');
+    anim = null;
+    if (dive && autozoom) setAuto(false);     // pause; the dive resumes toward the same point
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), m: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] };
+    }
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    const prev = pointers.get(e.pointerId);
+    const cur = localPx(e);
+    pointers.set(e.pointerId, cur);
+    if (pointers.size === 1) {
+      const ddx = (cur[0] - prev[0]) * view.scale, ddy = (cur[1] - prev[1]) * view.scale;
+      view.cx -= ddx; view.cy += ddy;
+      if (target && autozoom && !dive) { target.cx -= ddx; target.cy += ddy; }
+    } else if (pointers.size === 2 && pinch) {
+      const [a, b] = [...pointers.values()];
+      const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      view.cx -= (m[0] - pinch.m[0]) * view.scale;
+      view.cy += (m[1] - pinch.m[1]) * view.scale;
+      if (d > 0) zoomAtPx(m[0], m[1], pinch.d / d);
+      pinch = { d, m };
+    }
+  });
+  function endPointer(e) {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinch = null;
+    if (pointers.size === 0) { canvas.classList.remove('dragging'); requestRender(0); }
+  }
+  canvas.addEventListener('pointerup', endPointer);
+  canvas.addEventListener('pointercancel', endPointer);
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    let dy = e.deltaY;
+    if (e.deltaMode === 1) dy *= 16; else if (e.deltaMode === 2) dy *= 400;
+    const [px, py] = localPx(e);
+    zoomAtPx(px, py, Math.exp(Math.max(-300, Math.min(300, dy)) * 0.0018));
+    requestRender(140);
+  }, { passive: false });
+  canvas.addEventListener('dblclick', (e) => {
+    const [px, py] = localPx(e);
+    anim = { px, py, logF: Math.log(e.shiftKey ? 3 : 1 / 3), t0: performance.now(), dur: 380, done: 0 };
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.target.closest('input, select, button, textarea')) return;
+    if (e.key === ' ') { e.preventDefault(); if (autozoom) setAuto(false); else setAuto(true); }
+    else if (e.key === '+' || e.key === '=') anim = { px: W / 2, py: H / 2, logF: Math.log(1 / 2), t0: performance.now(), dur: 300, done: 0 };
+    else if (e.key === '-' || e.key === '_') anim = { px: W / 2, py: H / 2, logF: Math.log(2), t0: performance.now(), dur: 300, done: 0 };
+    else if (e.key.startsWith('Arrow')) {
+      const s = 60 * DPR * view.scale;
+      if (e.key === 'ArrowLeft') view.cx -= s;
+      if (e.key === 'ArrowRight') view.cx += s;
+      if (e.key === 'ArrowUp') view.cy += s;
+      if (e.key === 'ArrowDown') view.cy -= s;
+      requestRender(120);
+    }
+  });
+
+  /* ================= Controls ================= */
+  // keep the phone screen on while zooming (allowed only while the page is visible; may be refused)
+  let wakeLock = null;
+  async function holdWake(on) {
+    try {
+      if (on && !wakeLock && navigator.wakeLock && document.visibilityState === 'visible') {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+      } else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+    } catch (_) { wakeLock = null; }
+  }
+  document.addEventListener('visibilitychange', () => { if (autozoom) holdWake(true); });
+  function autoLabel() {
+    const b = $('auto');
+    const resumable = !!dive || (mode !== 'straight' && !!target);
+    const label = autozoom ? '❚❚ 一時停止' : resumable ? '▶ 再開' : '▶ 自動ズーム';
+    if (b.textContent !== label) b.textContent = label;
+    b.setAttribute('aria-pressed', String(autozoom));
+  }
+  function setAuto(on) {
+    autozoom = on;
+    autoLabel();
+    holdWake(on);
+    if (on) {
+      limitHit = false; anim = null; effSpeed = 0;
+      if (dive) return;
+      if (mode === 'slow') pickTarget(); else if (mode === 'tour' && !target) randomTarget();
+    } else requestRender(0);
+  }
+  const diveNote = $('diveNote');
+  const diveDefault = diveNote.textContent;
+  function markDive(i) {
+    diveIdx = i;
+    document.querySelectorAll('button.dive').forEach((b, j) => b.setAttribute('aria-pressed', String(j === i)));
+  }
+  function endDive() { if (dive) { dive = null; target = null; markDive(-1); diveNote.textContent = diveDefault; } }
+  function arrived() {
+    const name = dive.name;
+    target = null;
+    dive = null;
+    setAuto(false);
+    diveNote.textContent = `「${name}」に到着しました（×${zoomOf().toExponential(2)}）。ここからは手動で潜ったり、ツアーを始めたりできます。`;
+    markDive(-1);
+  }
+  function startDive(i) {
+    const d = DIVES[i];
+    leaveJulia(false);
+    setAuto(false);
+    endDive();
+    goToStrings('-0.6', '0', 1);
+    $('preset').value = '0';
+    const digits = Math.max(d.re.length, d.im.length);
+    const Pd = Math.max(128, Math.ceil(digits * 3.33) + 64);
+    dive = { name: d.name, x: decToFixed(d.re, Pd), y: decToFixed(d.im, Pd), P: Pd, end: d.end };
+    // near a minibrot of period p, escapes take many multiples of p iterations
+    iterFloor = d.period ? d.period * 30 : 0;
+    iterPow = d.iterPow || 0;
+    markDive(i);
+    diveNote.textContent = d.end === Infinity
+      ? `「${d.name}」へ潜っています。終点はなく、doubleの指数部の限界（約10²⁹⁰倍）まで進みます。`
+      : `「${d.name}」へ潜っています。×${d.end.toExponential(1)} で止まります。速さのスライダーで加速できます。`;
+    setAuto(true);
+  }
+  const divesEl = $('dives');
+  DIVES.forEach((d, i) => {
+    const b = document.createElement('button');
+    b.className = 'dive';
+    b.type = 'button';
+    b.setAttribute('aria-pressed', 'false');
+    const t = document.createElement('b'); t.textContent = d.name;
+    const sm = document.createElement('small'); sm.textContent = d.desc;
+    b.append(t, sm);
+    b.addEventListener('click', () => startDive(i));
+    divesEl.append(b);
+  });
+
+  $('kind-m').addEventListener('click', () => leaveJulia(true));
+  $('kind-j').addEventListener('click', () => enterJulia());
+  $('auto').addEventListener('click', () => { if (autozoom) { setAuto(false); } else setAuto(true); });
+  $('reset').addEventListener('click', () => { endDive(); setAuto(false); if (julia) { goToStrings('0', '0', 0.9); $('preset').value = '0'; return; } goToStrings('-0.6', '0', 1); $('preset').value = '0'; });
+
+  const MODE_NOTES = {
+    tour: '出発点は画面中心に集中した正規分布の乱数で決めます。設定した倍率だけ進むたびに、隣り合うピクセル値の差が上位1%の点のうち、前のターゲットに最も近い点へ乗り換えます。',
+    slow: '画面中央付近で発散が最も遅い点（境界に最も近い点）を探し、そこへ舵を切りながら潜ります。',
+    straight: '画面の中心へまっすぐ拡大します。ドラッグでかじ取りできます。',
+  };
+  function syncMode() {
+    $('modeNote').textContent = MODE_NOTES[mode];
+    $('retargetField').hidden = mode !== 'tour';
+  }
+  $('mode').addEventListener('change', (e) => {
+    endDive(); mode = e.target.value; target = null; syncMode();
+    if (autozoom) { if (mode === 'slow') pickTarget(); else if (mode === 'tour') randomTarget(); }
+  });
+  $('tour').addEventListener('click', () => {
+    endDive();
+    mode = 'tour'; $('mode').value = 'tour'; syncMode();
+    anim = null;
+    randomTarget();
+    if (!autozoom) setAuto(true);
+  });
+  const rt = $('retarget');
+  function syncRetarget() { retargetStep = +rt.value; $('retargetOut').textContent = `倍率 ×${Math.pow(2, retargetStep).toFixed(2)} ごと`; }
+  rt.addEventListener('input', syncRetarget);
+
+  $('quality').value = quality;
+  $('quality').addEventListener('change', (e) => {
+    quality = e.target.value;
+    try { localStorage.setItem('mb.quality', quality); } catch (_) {}
+    resize(true);               // the resolution may change with the quality level
+  });
+  $('useWasm').checked = useWasm;
+  $('useWasm').addEventListener('change', (e) => { useWasm = e.target.checked; requestRender(0); });
+  $('useSimd').addEventListener('change', (e) => { useSimd = e.target.checked; requestRender(0); });
+  $('useInterior').addEventListener('change', (e) => { useInterior = e.target.checked; requestRender(0); });
+  $('useBla').addEventListener('change', (e) => { useBla = e.target.checked; lastSkipFrac = -1; requestRender(0); });
+  $('dblOnly').addEventListener('change', (e) => { dblOnly = e.target.checked; limitHit = false; requestRender(0); });
+
+  const presetSel = $('preset');
+  PRESETS.forEach((p, i) => presetSel.add(new Option(p.name, String(i))));
+  presetSel.addEventListener('change', () => {
+    const p = PRESETS[+presetSel.value];
+    leaveJulia(false); endDive(); setAuto(false);
+    goToStrings(p.re, p.im, p.zoom);
+  });
+
+  const coordIn = $('coordIn'), coordMsg = $('coordMsg');
+  function say(msg, err) { coordMsg.textContent = msg; coordMsg.classList.toggle('err', !!err); }
+  $('copyCoord').addEventListener('click', () => {
+    const c = currentCoords();
+    const text = julia
+      ? `julia\n${julia.reStr}\n${julia.imStr}\n${c.re}\n${c.im}\n${zoomOf().toExponential(4)}`
+      : `${c.re}\n${c.im}\n${zoomOf().toExponential(4)}`;
+    coordIn.value = text;
+    const done = () => say('現在地を書き出してクリップボードにコピーしました。');
+    const fail = () => { coordIn.select(); say('現在地を書き出しました。選択済みなのでそのままコピーできます。'); };
+    try { navigator.clipboard.writeText(text).then(done, fail); } catch (_) { fail(); }
+  });
+  $('goCoord').addEventListener('click', () => {
+    const parts = coordIn.value.trim().split(/[\s,]+/).filter(Boolean);
+    if (parts[0] && parts[0].toLowerCase() === 'julia') {
+      // julia <c re> <c im> <z re> <z im> [zoom]
+      const cr = Number(parts[1]), ci = Number(parts[2]), zoomJ = parts[5] ? Number(parts[5]) : 0.9;
+      if (!isFinite(cr) || !isFinite(ci) || parts.length < 5) { say('ジュリア集合の形式: julia c実部 c虚部 中心実部 中心虚部 倍率', true); return; }
+      endDive(); setAuto(false);
+      if (!julia) savedMandel = { x: anchor.x + dblToFixed(view.cx, P), y: anchor.y + dblToFixed(view.cy, P), P, zoom: zoomOf(), mode };
+      julia = { cr, ci, reStr: parts[1], imStr: parts[2] };
+      if (goToStrings(parts[3], parts[4], zoomJ)) say('ジュリア集合のその場所へ移動しました。'); else say('数値として読めませんでした。', true);
+      syncSetKind();
+      return;
+    }
+    leaveJulia(false);
+    if (parts.length < 2) { say('実部と虚部を空白か改行で区切って入れてください。倍率は省略できます。', true); return; }
+    const zoom = parts[2] ? Number(parts[2].replace(/^×/, '')) : 1;
+    endDive(); setAuto(false);
+    if (goToStrings(parts[0], parts[1], zoom)) say('移動しました。');
+    else say('数値として読めませんでした。例: -0.7436 0.1318 1e8', true);
+  });
+
+  const palSel = $('palette');
+  PALETTES.forEach((p, i) => palSel.add(new Option(p.name, String(i))));
+  function paintSwatch() {
+    const stops = [];
+    for (let i = 0; i <= 8; i++) { const j = Math.floor(i / 8 * (LUT_N - 1)) * 3; stops.push(`rgb(${lut[j]},${lut[j + 1]},${lut[j + 2]})`); }
+    $('swatch').style.background = `linear-gradient(90deg, ${stops.join(',')})`;
+  }
+  palSel.addEventListener('change', () => { lut = buildLUT(PALETTES[+palSel.value]); paintSwatch(); recolor(); });
+
+  const dens = $('density');
+  function syncDensity() { density = Math.pow(10, +dens.value / 2); $('densityOut').textContent = density.toFixed(3); }
+  dens.addEventListener('input', () => { syncDensity(); recolor(); });
+
+  const it = $('iters');
+  function syncIters() { iterMult = Math.pow(2, +it.value); $('itersOut').textContent = '×' + (iterMult < 1 ? iterMult.toFixed(2) : iterMult.toFixed(iterMult % 1 ? 2 : 0)); }
+  it.addEventListener('input', () => { syncIters(); requestRender(200); });
+
+  const sp = $('speed');
+  function syncSpeed() { speed = +sp.value; $('speedOut').textContent = `毎秒 ×${Math.pow(2, speed).toFixed(2)}`; }
+  sp.addEventListener('input', syncSpeed);
+
+  // per-viewer conveniences only; the page works the same without storage
+  const store = {
+    get(k) { try { return localStorage.getItem('mb.' + k); } catch (_) { return null; } },
+    set(k, v) { try { localStorage.setItem('mb.' + k, v); } catch (_) {} },
+  };
+  const panel = $('panel'), toggle = $('toggle');
+  function setPanel(open) {
+    panel.classList.toggle('collapsed', !open);
+    toggle.setAttribute('aria-expanded', String(open));
+    toggle.textContent = open ? 'たたむ' : 'ひらく';
+  }
+  toggle.addEventListener('click', () => setPanel(panel.classList.contains('collapsed')));
+
+  const tabs = [...document.querySelectorAll('#ptabs [role="tab"]')];
+  function selectTab(id, focus) {
+    for (const t of tabs) {
+      const on = t.id === id;
+      t.setAttribute('aria-selected', String(on));
+      t.tabIndex = on ? 0 : -1;
+      $(t.getAttribute('aria-controls')).hidden = !on;
+      if (on && focus) t.focus();
+    }
+    $('pbody').scrollTop = 0;
+    store.set('tab', id);
+  }
+  tabs.forEach((t, i) => {
+    t.addEventListener('click', () => selectTab(t.id));
+    t.addEventListener('keydown', (e) => {
+      const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (d) {
+        e.preventDefault();
+        const vis = tabs.filter((x) => !x.hidden), j = vis.indexOf(t);
+        selectTab(vis[(j + d + vis.length) % vis.length].id, true);
+      }
+    });
+  });
+  const savedTab = store.get('tab');
+
+  const look = $('look'), lookToggle = $('lookToggle');
+  function setLook(open) {
+    look.classList.toggle('collapsed', !open);
+    lookToggle.setAttribute('aria-expanded', String(open));
+    store.set('look', open ? '1' : '0');
+  }
+  lookToggle.addEventListener('click', () => setLook(look.classList.contains('collapsed')));
+  // HUD: a small button shrinks it to zoom + status
+  const hud = $('hud'), hudToggle = $('hudToggle');
+  function setHud(open) {
+    hud.classList.toggle('compact', !open);
+    hudToggle.setAttribute('aria-expanded', String(open));
+    hudToggle.textContent = open ? '−' : '+';
+    hudToggle.setAttribute('aria-label', open ? '座標表示を小さくする' : '座標表示を広げる');
+  }
+  hudToggle.addEventListener('click', () => { const open = hud.classList.contains('compact'); setHud(open); store.set('hud', open ? '1' : '0'); });
+
+  // Narrow screens: the display options move into a fourth tab of the bottom panel,
+  // and the HUD starts compact, so nothing overlaps at the top of the screen.
+  const mq = window.matchMedia('(max-width: 640px)');
+  const lookBody = $('lookBody'), paneLook = $('pane-look'), tabLook = $('tab-look');
+  function applyNarrow(n) {
+    const from = n ? lookBody : paneLook, to = n ? paneLook : lookBody;
+    while (from.firstChild) to.appendChild(from.firstChild);
+    look.hidden = n;
+    tabLook.hidden = !n;
+    if (!n && tabLook.getAttribute('aria-selected') === 'true') selectTab('tab-explore');
+    const savedHud = store.get('hud');
+    setHud(savedHud ? savedHud === '1' : !n);
+  }
+  applyNarrow(mq.matches);
+  if (mq.addEventListener) mq.addEventListener('change', (e) => applyNarrow(e.matches));
+  if (mq.matches) setPanel(false);
+  const savedLook = store.get('look');
+  setLook(savedLook ? savedLook === '1' : true);
+  if (savedTab && $(savedTab) && !$(savedTab).hidden) selectTab(savedTab);
+
+  /* ================= Boot ================= */
+  lut = buildLUT(PALETTES[0]);
+  paintSwatch();
+  syncDensity(); syncIters(); syncSpeed(); syncMode(); syncRetarget();
+  syncSetKind();
+  new ResizeObserver(resize).observe(canvas);
+  resize();
+  requestAnimationFrame(frame);
+
+})();
+</script>
+
+</body>
+</html>

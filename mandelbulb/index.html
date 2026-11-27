@@ -1,0 +1,656 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); box-sizing: border-box; height: 100%; }
+body { margin: 0; font: 14px/1.5 system-ui, sans-serif; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<title>マンデルバルブ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+JP:wght@400;500;700&display=swap">
+<style>
+/* Layout: full-bleed WebGL canvas with a floating instrument panel (bottom sheet on phones) and a small readout. Single dark look by design: a lit object floating in a dark room. */
+:root {
+  --bg: #07080b;
+  --panel: rgba(13, 14, 20, 0.84);
+  --panel-solid: #101119;
+  --line: rgba(170, 160, 210, 0.2);
+  --fg: #ecebf3;
+  --muted: #9b98b0;
+  --accent: #d9b46a;
+  --accent-ink: #1c1408;
+  --font-ui: "IBM Plex Sans JP", "Hiragino Kaku Gothic ProN", "Noto Sans JP", system-ui, sans-serif;
+  --font-num: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); overflow: hidden; }
+#app { position: relative; height: 100%; overflow: hidden; }
+#gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+#gl.dragging { cursor: grabbing; }
+
+.panel {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 16px);
+  left: max(16px, env(safe-area-inset-left, 0px));
+  width: 290px;
+  max-height: calc(100% - 32px);
+  display: flex; flex-direction: column;
+  background: var(--panel);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.p-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); flex: none; }
+.p-head h1 { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: 0.02em; }
+.p-head h1 small { display: block; margin-top: 2px; font-family: var(--font-num); font-size: 10.5px; font-weight: 400; color: var(--muted); }
+.p-body { padding: 14px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
+.p-body > * { flex-shrink: 0; }
+[hidden] { display: none !important; }
+.panel.collapsed .p-body { display: none; }
+.panel.collapsed .p-head { border-bottom: 0; }
+
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+button, select { font: inherit; font-size: 13px; color: var(--fg); background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 7px; padding: 7px 11px; cursor: pointer; }
+button:hover, select:hover { border-color: rgba(210,200,255,0.45); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.ghost { background: transparent; border-color: transparent; color: var(--muted); padding: 4px 8px; white-space: nowrap; }
+button[aria-pressed="true"] { background: rgba(217,180,106,0.15); border-color: var(--accent); }
+select { width: 100%; background-color: var(--panel-solid); }
+.seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: transparent; color: var(--muted); }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: rgba(217,180,106,0.15); color: var(--fg); font-weight: 700; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field > label, .lbl { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; letter-spacing: 0.08em; color: var(--muted); }
+.field output { font-family: var(--font-num); color: var(--fg); letter-spacing: 0; font-variant-numeric: tabular-nums; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+.check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; line-height: 1.45; cursor: pointer; }
+.check input { margin-top: 3px; accent-color: var(--accent); }
+.note { margin: 0; font-size: 12px; line-height: 1.6; color: var(--muted); }
+.hint { margin: 0; padding: 0; list-style: none; font-size: 12px; line-height: 1.7; color: var(--muted); }
+.hint b { color: var(--fg); font-weight: 500; }
+hr { border: 0; border-top: 1px solid var(--line); margin: 0; }
+.formula { font-family: var(--font-num); font-size: 12px; line-height: 1.7; color: var(--fg); background: rgba(255,255,255,0.04); border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; overflow-x: auto; white-space: nowrap; }
+
+#hud {
+  position: absolute;
+  right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  background: var(--panel);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 13px;
+  font-family: var(--font-num);
+  font-size: 12px;
+  line-height: 1.65;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+#hud .k { display: inline-block; width: 5.5em; color: var(--muted); }
+#err { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--muted); font-size: 14px; line-height: 1.7; }
+
+@media (max-width: 640px) {
+  .panel {
+    top: auto;
+    left: max(10px, env(safe-area-inset-left, 0px));
+    right: max(10px, env(safe-area-inset-right, 0px));
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+    width: auto;
+    max-height: 55%;
+  }
+  .p-head h1 small { display: none; }
+  #hud { right: auto; left: max(10px, env(safe-area-inset-left, 0px)); top: calc(env(safe-area-inset-top, 0px) + 10px); bottom: auto; font-size: 11px; padding: 7px 10px; }
+}
+</style>
+
+<div id="app">
+  <canvas id="gl" aria-label="マンデルバルブの3D表示。ドラッグで回転、ホイールかピンチで拡大縮小、ダブルクリックでその点へ近づく。"></canvas>
+  <div id="err" hidden></div>
+
+  <aside class="panel" id="panel">
+    <div class="p-head">
+      <h1>マンデルバルブ<small>z ← zⁿ + c を3次元で ／ 距離推定レイマーチング</small></h1>
+      <button class="ghost" id="toggle" aria-expanded="true" aria-controls="pbody">たたむ</button>
+    </div>
+    <div class="p-body" id="pbody">
+      <div class="seg" role="group" aria-label="式の種類">
+        <button id="kindBulb" aria-pressed="true">マンデルバルブ</button>
+        <button id="kindJulia" aria-pressed="false">ジュリアバルブ</button>
+      </div>
+      <div class="formula" id="formula">z₀ = 0,  z ← zⁿ + c,  c = 空間の点</div>
+
+      <div class="field">
+        <label for="power">次数 n <output id="powerOut"></output></label>
+        <input type="range" id="power" min="2" max="16" step="0.01" value="8">
+      </div>
+      <div class="row">
+        <button id="animPower" aria-pressed="false">次数をゆっくり動かす</button>
+        <button id="autoRot" aria-pressed="true">自動回転</button>
+      </div>
+
+      <div id="juliaFields" hidden>
+        <div class="field">
+          <label for="jx">c の x <output id="jxOut"></output></label>
+          <input type="range" id="jx" min="-1.2" max="1.2" step="0.005" value="0.35">
+        </div>
+        <div class="field">
+          <label for="jy">c の y <output id="jyOut"></output></label>
+          <input type="range" id="jy" min="-1.2" max="1.2" step="0.005" value="-0.48">
+        </div>
+        <div class="field">
+          <label for="jz">c の z <output id="jzOut"></output></label>
+          <input type="range" id="jz" min="-1.2" max="1.2" step="0.005" value="0.2">
+        </div>
+        <div class="row"><button id="animC" aria-pressed="false">c をゆらす</button></div>
+      </div>
+
+      <hr>
+
+      <div class="field">
+        <label for="palette">材質</label>
+        <select id="palette">
+          <option value="0">真鍮と藍</option>
+          <option value="1">珊瑚</option>
+          <option value="2">翡翠</option>
+          <option value="3">白磁</option>
+          <option value="4">虹の軌道</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="quality">描画品質</label>
+        <select id="quality">
+          <option value="low">軽量：解像度 1/2・影なし</option>
+          <option value="mid">標準：解像度 3/4・影あり</option>
+          <option value="high">高精細：等倍・影と環境光を丁寧に</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="iters">反復回数 <output id="itersOut"></output></label>
+        <input type="range" id="iters" min="3" max="24" step="1" value="10">
+      </div>
+      <button id="resetView">初期の視点に戻る</button>
+
+      <hr>
+      <p class="note">3次元には複素数の掛け算がないので、点を球座標 (r, θ, φ) で表し「長さを n 乗、角度を n 倍」して z の n 乗の代わりにします。次数 8 が有名なマンデルバルブです。描画は各ピクセルから光線を飛ばし、境界までの推定距離ぶんずつ進んで表面を探します。</p>
+      <ul class="hint">
+        <li><b>ドラッグ</b> 回転</li>
+        <li><b>ホイール／ピンチ</b> 近づく・離れる</li>
+        <li><b>ダブルクリック</b> その点を中心にして近づく</li>
+      </ul>
+    </div>
+  </aside>
+
+  <div id="hud">
+    <div><span class="k">次数</span><span id="hPower"></span></div>
+    <div><span class="k">倍率</span><span id="hZoom"></span></div>
+    <div><span class="k">解像度</span><span id="hFps"></span></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const canvas = $('gl');
+  const gl = canvas.getContext('webgl', { antialias: false, preserveDrawingBuffer: false, powerPreference: 'high-performance' });
+  if (!gl) {
+    const e = $('err'); e.hidden = false;
+    e.textContent = 'このブラウザでは WebGL が使えないため表示できません。別のブラウザか、ハードウェアアクセラレーションを有効にして開いてください。';
+    return;
+  }
+
+  /* ================= Shaders ================= */
+  const vs = `attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }`;
+  const fs = `
+precision highp float;
+uniform vec2 uRes;
+uniform vec3 uCam, uRight, uUp, uFwd;
+uniform float uFov, uPower, uJulia, uPix, uTime;
+uniform vec3 uJC;
+uniform vec3 uLight;   // key light direction, fixed relative to the camera (upper right, behind the viewer)
+uniform int uIter, uSteps, uShadow, uAO, uPal;
+
+// Mandelbulb / Juliabulb distance estimate (White-Nylander power formula).
+// trap: smallest |z| seen along the orbit, used for colouring.
+float DE(vec3 pos, out float trap) {
+  vec3 c = uJulia > 0.5 ? uJC : pos;
+  vec3 z = pos;
+  float dr = 1.0, r = length(z);
+  trap = 1e9;
+  for (int i = 0; i < 32; i++) {
+    if (i >= uIter || r > 2.0) break;
+    float theta = acos(clamp(z.z / r, -1.0, 1.0));
+    float phi = atan(z.y, z.x);
+    dr = pow(r, uPower - 1.0) * uPower * dr + (uJulia > 0.5 ? 0.0 : 1.0);
+    float zr = pow(r, uPower);
+    theta *= uPower; phi *= uPower;
+    z = zr * vec3(sin(theta) * cos(phi), sin(phi) * sin(theta), cos(theta)) + c;
+    r = length(z);
+    trap = min(trap, r);
+  }
+  return 0.5 * log(max(r, 1e-6)) * r / dr;
+}
+float DE(vec3 p) { float t; return DE(p, t); }
+
+vec3 normalAt(vec3 p, float h) {
+  const vec2 k = vec2(1.0, -1.0);
+  return normalize(k.xyy * DE(p + k.xyy * h) + k.yyx * DE(p + k.yyx * h) +
+                   k.yxy * DE(p + k.yxy * h) + k.xxx * DE(p + k.xxx * h));
+}
+
+vec3 palette(float t) {
+  // cosine palettes (a + b cos(2pi(c t + d)))
+  vec3 a, b, c, d;
+  if (uPal == 0) { a = vec3(0.55, 0.45, 0.32); b = vec3(0.45, 0.38, 0.30); c = vec3(1.0, 1.0, 1.0); d = vec3(0.0, 0.08, 0.55); }
+  else if (uPal == 1) { a = vec3(0.70, 0.42, 0.38); b = vec3(0.30, 0.28, 0.25); c = vec3(1.0, 0.9, 0.8); d = vec3(0.0, 0.15, 0.25); }
+  else if (uPal == 2) { a = vec3(0.28, 0.52, 0.45); b = vec3(0.22, 0.30, 0.25); c = vec3(1.0, 1.0, 1.0); d = vec3(0.3, 0.2, 0.25); }
+  else if (uPal == 3) { a = vec3(0.86, 0.85, 0.83); b = vec3(0.10, 0.10, 0.12); c = vec3(1.0, 1.0, 1.0); d = vec3(0.0, 0.1, 0.2); }
+  else { a = vec3(0.5); b = vec3(0.5); c = vec3(1.0); d = vec3(0.0, 0.33, 0.67); }
+  return a + b * cos(6.2831853 * (c * t + d));
+}
+
+float softShadow(vec3 ro, vec3 rd, float k, float eps) {
+  float res = 1.0, t = eps * 4.0;
+  for (int i = 0; i < 48; i++) {
+    float h = DE(ro + rd * t);
+    res = min(res, k * h / t);
+    t += clamp(h, eps, 0.2);
+    if (res < 0.02 || t > 3.0) break;
+  }
+  return clamp(res, 0.0, 1.0);
+}
+
+float ambientOcc(vec3 p, vec3 n, float scale) {
+  float occ = 0.0, w = 1.0;
+  for (int i = 1; i <= 6; i++) {
+    if (i > uAO) break;
+    float h = scale * float(i);
+    occ += w * (h - DE(p + n * h));
+    w *= 0.55;
+  }
+  return clamp(1.0 - 3.0 * occ / scale, 0.0, 1.0);
+}
+
+vec3 background(vec3 rd) {
+  float g = 0.5 + 0.5 * rd.y;
+  return mix(vec3(0.018, 0.02, 0.03), vec3(0.06, 0.055, 0.085), g);
+}
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy - 0.5 * uRes) / min(uRes.x, uRes.y);   // field of view fits the shorter side
+  vec3 rd = normalize(uFwd + uv.x * uFov * uRight + uv.y * uFov * uUp);
+  vec3 ro = uCam;
+
+  // only march inside the bounding sphere of the set
+  float B = 1.5;
+  float bq = dot(ro, rd), cq = dot(ro, ro) - B * B, disc = bq * bq - cq;
+  vec3 col = background(rd);
+  if (disc > 0.0) {
+    float sq = sqrt(disc);
+    float t = max(-bq - sq, 0.0), tEnd = -bq + sq;
+    float trap = 0.0, minD = 1e9;
+    bool hit = false;
+    float eps = 0.0;
+    int used = 0;
+    for (int i = 0; i < 400; i++) {
+      if (i >= uSteps) break;
+      vec3 p = ro + rd * t;
+      float tr;
+      float d = DE(p, tr);
+      eps = uPix * t;               // stop when the step is below a pixel's footprint
+      minD = min(minD, d / max(t, 1e-6));
+      if (d < eps) { hit = true; trap = tr; break; }
+      t += d * 0.9;
+      used = i;
+      if (t > tEnd) break;
+    }
+    if (hit) {
+      vec3 p = ro + rd * t;
+      vec3 n = normalAt(p, max(eps * 0.5, 1e-7));
+      vec3 L = uLight;
+      float diff = max(dot(n, L), 0.0);
+      float sh = uShadow > 0 ? softShadow(p + n * eps * 2.0, L, 12.0, max(eps, 1e-5)) : 1.0;
+      float ao = ambientOcc(p, n, max(0.015 * t, eps * 4.0));
+      vec3 base = palette(clamp(trap, 0.0, 1.2) * 1.15 + 0.08);
+      vec3 H = normalize(L - rd);
+      float spec = pow(max(dot(n, H), 0.0), 40.0) * sh;
+      float rim = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
+      vec3 sky = vec3(0.30, 0.34, 0.48);
+      col = base * (diff * sh * vec3(1.15, 1.05, 0.92) + 0.22 * ao * sky + 0.10 * ao)
+          + spec * vec3(1.0, 0.95, 0.85) * 0.6
+          + rim * ao * 0.18 * sky;
+      // gentle depth fog toward the background
+      col = mix(col, background(rd), 1.0 - exp(-0.15 * t * t / max(dot(ro, ro), 0.05)));
+    } else {
+      // faint glow where the ray grazed the surface
+      float glow = exp(-minD * 60.0);
+      col += vec3(0.20, 0.16, 0.30) * glow * 0.35;
+    }
+  }
+  // vignette + gamma
+  vec2 q = gl_FragCoord.xy / uRes;
+  col *= 0.75 + 0.25 * pow(16.0 * q.x * q.y * (1.0 - q.x) * (1.0 - q.y), 0.2);
+  gl_FragColor = vec4(pow(max(col, 0.0), vec3(0.4545)), 1.0);
+}`;
+
+  function compile(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  let prog;
+  try {
+    prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, vs));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  } catch (err) {
+    const e = $('err'); e.hidden = false;
+    e.textContent = 'シェーダーの準備に失敗しました：' + err.message;
+    return;
+  }
+  gl.useProgram(prog);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'p');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  const U = {};
+  for (const n of ['uLight', 'uRes', 'uCam', 'uRight', 'uUp', 'uFwd', 'uFov', 'uPower', 'uJulia', 'uPix', 'uTime', 'uJC', 'uIter', 'uSteps', 'uShadow', 'uAO', 'uPal'])
+    U[n] = gl.getUniformLocation(prog, n);
+
+  /* ================= State ================= */
+  const QUALITY = {
+    low:  { scale: 0.5,  steps: 160, shadow: 0, ao: 3 },
+    mid:  { scale: 0.75, steps: 240, shadow: 1, ao: 4 },
+    high: { scale: 1.0,  steps: 360, shadow: 1, ao: 6 },
+  };
+  const narrow = window.matchMedia('(max-width: 640px)').matches;
+  const store = {
+    get(k) { try { return localStorage.getItem('bulb.' + k); } catch (_) { return null; } },
+    set(k, v) { try { localStorage.setItem('bulb.' + k, v); } catch (_) {} },
+  };
+  const S = {
+    power: 8, iters: 10, julia: false, jc: [0.35, -0.48, 0.2], pal: 0,
+    quality: store.get('quality') || (narrow || (navigator.hardwareConcurrency || 4) <= 4 ? 'low' : 'mid'),
+    dist: 3.4, target: [0, 0, 0],
+    // camera orientation as an orthonormal frame (right, up, forward); forward points at the target
+    rot: null,
+    autoRot: true, animPower: false, animC: false,
+  };
+  const FOV = 0.9;
+  let dirty = true, interacting = 0, lastFrame = performance.now(), fpsEma = 0, renderScale = 1;
+
+  /* ================= Camera ================= */
+  // Trackball camera: the frame itself is rotated (no yaw/pitch angles), so there is no pole where
+  // a drag stops working (gimbal lock) and no direction where the frame becomes undefined.
+  function frameFromAngles(yaw, pitch) {
+    const cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const f = norm([-cp * Math.sin(yaw), -sp, -cp * Math.cos(yaw)]);
+    const r = norm(cross(f, [0, 1, 0]));
+    return { r, u: cross(r, f), f };
+  }
+  // rotate v around unit axis k by angle a (Rodrigues)
+  function rotate(v, k, a) {
+    const c = Math.cos(a), s = Math.sin(a), d = dot(k, v), x = cross(k, v);
+    return [v[0] * c + x[0] * s + k[0] * d * (1 - c), v[1] * c + x[1] * s + k[1] * d * (1 - c), v[2] * c + x[2] * s + k[2] * d * (1 - c)];
+  }
+  // keep the frame orthonormal after many small rotations
+  function orthonormal(fr) {
+    const f = norm(fr.f);
+    const r = norm(cross(f, fr.u));
+    return { r, u: cross(r, f), f };
+  }
+  function turn(axis, a) {
+    const R = S.rot;
+    S.rot = orthonormal({ r: rotate(R.r, axis, a), u: rotate(R.u, axis, a), f: rotate(R.f, axis, a) });
+  }
+  function camera() {
+    const { r, u, f } = S.rot;
+    const cam = [S.target[0] - f[0] * S.dist, S.target[1] - f[1] * S.dist, S.target[2] - f[2] * S.dist];
+    return { cam, f, r, u };
+  }
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const norm = (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+  /* ================= CPU copy of the distance estimate (for double-click picking) ================= */
+  function deCPU(px, py, pz) {
+    const cx = S.julia ? S.jc[0] : px, cy = S.julia ? S.jc[1] : py, cz = S.julia ? S.jc[2] : pz;
+    let x = px, y = py, z = pz, dr = 1, r = Math.hypot(x, y, z);
+    const n = S.power;
+    for (let i = 0; i < S.iters && r <= 2; i++) {
+      const theta = Math.acos(Math.max(-1, Math.min(1, z / r))) * n, phi = Math.atan2(y, x) * n;
+      dr = Math.pow(r, n - 1) * n * dr + (S.julia ? 0 : 1);
+      const zr = Math.pow(r, n);
+      x = zr * Math.sin(theta) * Math.cos(phi) + cx;
+      y = zr * Math.sin(phi) * Math.sin(theta) + cy;
+      z = zr * Math.cos(theta) + cz;
+      r = Math.hypot(x, y, z);
+    }
+    return 0.5 * Math.log(Math.max(r, 1e-6)) * r / dr;
+  }
+  function pick(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const m = Math.min(rect.width, rect.height);
+    const ux = (clientX - rect.left - rect.width / 2) / m, uy = -(clientY - rect.top - rect.height / 2) / m;
+    const { cam, f, r, u } = camera();
+    const rd = norm([f[0] + ux * FOV * r[0] + uy * FOV * u[0], f[1] + ux * FOV * r[1] + uy * FOV * u[1], f[2] + ux * FOV * r[2] + uy * FOV * u[2]]);
+    const pix = FOV / m;
+    let t = 0;
+    for (let i = 0; i < 600; i++) {
+      const p = [cam[0] + rd[0] * t, cam[1] + rd[1] * t, cam[2] + rd[2] * t];
+      if (Math.hypot(p[0], p[1], p[2]) > 1.6 && t > S.dist + 2) return null;
+      const d = deCPU(p[0], p[1], p[2]);
+      if (d < pix * t) return { p, t };
+      t += d * 0.9;
+      if (t > S.dist + 4) return null;
+    }
+    return null;
+  }
+
+  /* ================= Rendering ================= */
+  function resize() {
+    const q = QUALITY[S.quality];
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    renderScale = q.scale * (interacting ? 0.6 : 1);
+    const w = Math.max(1, Math.round(canvas.clientWidth * dpr * renderScale));
+    const h = Math.max(1, Math.round(canvas.clientHeight * dpr * renderScale));
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  }
+  function draw(time) {
+    resize();
+    const q = QUALITY[S.quality];
+    const { cam, f, r, u } = camera();
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.uniform2f(U.uRes, canvas.width, canvas.height);
+    gl.uniform3fv(U.uLight, norm([u[0] * 0.7 + r[0] * 0.45 - f[0] * 0.55, u[1] * 0.7 + r[1] * 0.45 - f[1] * 0.55, u[2] * 0.7 + r[2] * 0.45 - f[2] * 0.55]));
+    gl.uniform3fv(U.uCam, cam); gl.uniform3fv(U.uRight, r); gl.uniform3fv(U.uUp, u); gl.uniform3fv(U.uFwd, f);
+    gl.uniform1f(U.uFov, FOV);
+    gl.uniform1f(U.uPower, S.power);
+    gl.uniform1f(U.uJulia, S.julia ? 1 : 0);
+    gl.uniform3fv(U.uJC, S.jc);
+    gl.uniform1f(U.uPix, FOV / Math.min(canvas.width, canvas.height) * 1.5);
+    gl.uniform1f(U.uTime, time / 1000);
+    gl.uniform1i(U.uIter, S.iters);
+    gl.uniform1i(U.uSteps, interacting ? Math.round(q.steps * 0.7) : q.steps);
+    gl.uniform1i(U.uShadow, interacting ? 0 : q.shadow);
+    gl.uniform1i(U.uAO, interacting ? 2 : q.ao);
+    gl.uniform1i(U.uPal, S.pal);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  let t0 = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.1, (now - lastFrame) / 1000);
+    lastFrame = now;
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (S.autoRot && !reduce) { turn([0, 1, 0], dt * 0.18); dirty = true; }
+    if (S.animPower) {
+      S.power = 5 + 3.5 * (1 - Math.cos((now - t0) / 1000 * 0.25));   // 5 .. 12
+      syncPower(); dirty = true;
+    }
+    if (S.animC) {
+      const t = (now - t0) / 1000 * 0.2;
+      S.jc = [0.45 * Math.cos(t), 0.55 * Math.sin(t * 0.83), 0.35 * Math.sin(t * 0.61 + 1)];
+      syncC(); dirty = true;
+    }
+    if (dirty) {
+      draw(now);
+      dirty = false;
+      hud();
+    }
+    requestAnimationFrame(frame);
+  }
+  function hud() {
+    $('hPower').textContent = S.power.toFixed(2);
+    const z = 3.4 / S.dist;
+    $('hZoom').textContent = z < 1000 ? '×' + z.toFixed(z < 10 ? 2 : 0) : '×' + z.toExponential(2);
+    $('hFps').textContent = `${canvas.width}×${canvas.height}`;
+  }
+
+  /* ================= Input ================= */
+  const pointers = new Map();
+  let pinch = null, settleTimer = 0;
+  function beginInteract() { interacting = 1; clearTimeout(settleTimer); }
+  function endInteractSoon() {
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => { interacting = 0; dirty = true; }, 180);
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    canvas.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, [e.clientX, e.clientY]);
+    canvas.classList.add('dragging');
+    beginInteract();
+    if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch = Math.hypot(a[0] - b[0], a[1] - b[1]); }
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    const prev = pointers.get(e.pointerId);
+    pointers.set(e.pointerId, [e.clientX, e.clientY]);
+    if (pointers.size === 1) {
+      const k = 0.006;
+      // horizontal drag turns around the camera's own up axis, vertical drag around its right axis
+      turn(S.rot.u, -(e.clientX - prev[0]) * k);
+      turn(S.rot.r, -(e.clientY - prev[1]) * k);
+    } else if (pointers.size === 2 && pinch) {
+      const [a, b] = [...pointers.values()];
+      const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      if (d > 0) S.dist = clampDist(S.dist * pinch / d);
+      pinch = d;
+    }
+    dirty = true;
+  });
+  function endPointer(e) {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinch = null;
+    if (!pointers.size) { canvas.classList.remove('dragging'); endInteractSoon(); }
+  }
+  canvas.addEventListener('pointerup', endPointer);
+  canvas.addEventListener('pointercancel', endPointer);
+  const clampDist = (d) => Math.max(2e-4, Math.min(8, d));
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    let dy = e.deltaY; if (e.deltaMode === 1) dy *= 16;
+    S.dist = clampDist(S.dist * Math.exp(Math.max(-200, Math.min(200, dy)) * 0.0015));
+    beginInteract(); dirty = true; endInteractSoon();
+  }, { passive: false });
+  // double-click: move the orbit centre to the clicked surface point and fly halfway in
+  let fly = null;
+  canvas.addEventListener('dblclick', (e) => {
+    const h = pick(e.clientX, e.clientY);
+    if (!h) return;
+    const { cam } = camera();
+    const from = S.target.slice(), to = h.p;
+    // keep the camera where it is: new distance = |cam - hit|, then shrink it
+    const d0 = Math.hypot(cam[0] - to[0], cam[1] - to[1], cam[2] - to[2]);
+    const fTo = norm([to[0] - cam[0], to[1] - cam[1], to[2] - cam[2]]);
+    fly = { t0: performance.now(), from, to, dFrom: S.dist, dTo: clampDist(d0 * 0.45), f0: S.rot.f.slice(), f1: fTo };
+    S.autoRot = false; syncButtons();
+    beginInteract();
+    requestAnimationFrame(stepFly);
+  });
+  function stepFly() {
+    if (!fly) return;
+    const p = Math.min(1, (performance.now() - fly.t0) / 700), e = p * p * (3 - 2 * p);
+    for (let i = 0; i < 3; i++) S.target[i] = fly.from[i] + (fly.to[i] - fly.from[i]) * e;
+    S.dist = Math.exp(Math.log(fly.dFrom) + (Math.log(fly.dTo) - Math.log(fly.dFrom)) * e);
+    // turn the view direction toward the clicked point, keeping the current up as a hint
+    const f = norm([fly.f0[0] + (fly.f1[0] - fly.f0[0]) * e, fly.f0[1] + (fly.f1[1] - fly.f0[1]) * e, fly.f0[2] + (fly.f1[2] - fly.f0[2]) * e]);
+    let r = cross(f, S.rot.u);
+    if (Math.hypot(r[0], r[1], r[2]) < 1e-6) r = S.rot.r;
+    r = norm(r);
+    S.rot = { r, u: cross(r, f), f };
+    dirty = true;
+    if (p < 1) requestAnimationFrame(stepFly); else { fly = null; endInteractSoon(); }
+  }
+
+  /* ================= Controls ================= */
+  const power = $('power');
+  function syncPower() { power.value = S.power; $('powerOut').textContent = S.power.toFixed(2); }
+  power.addEventListener('input', () => { S.power = +power.value; S.animPower = false; syncButtons(); syncPower(); dirty = true; });
+  const iters = $('iters');
+  iters.addEventListener('input', () => { S.iters = +iters.value; $('itersOut').textContent = S.iters; dirty = true; });
+  function syncC() {
+    ['jx', 'jy', 'jz'].forEach((id, i) => { $(id).value = S.jc[i]; $(id + 'Out').textContent = S.jc[i].toFixed(3); });
+  }
+  ['jx', 'jy', 'jz'].forEach((id, i) => $(id).addEventListener('input', (e) => {
+    S.jc[i] = +e.target.value; S.animC = false; syncButtons(); syncC(); dirty = true;
+  }));
+  function syncKind() {
+    $('kindBulb').setAttribute('aria-pressed', String(!S.julia));
+    $('kindJulia').setAttribute('aria-pressed', String(S.julia));
+    $('juliaFields').hidden = !S.julia;
+    $('formula').textContent = S.julia ? 'z₀ = 空間の点,  z ← zⁿ + c,  c は固定' : 'z₀ = 0,  z ← zⁿ + c,  c = 空間の点';
+    dirty = true;
+  }
+  $('kindBulb').addEventListener('click', () => { S.julia = false; S.animC = false; syncButtons(); syncKind(); });
+  $('kindJulia').addEventListener('click', () => { S.julia = true; syncKind(); });
+  function syncButtons() {
+    $('animPower').setAttribute('aria-pressed', String(S.animPower));
+    $('autoRot').setAttribute('aria-pressed', String(S.autoRot));
+    $('animC').setAttribute('aria-pressed', String(S.animC));
+  }
+  $('animPower').addEventListener('click', () => { S.animPower = !S.animPower; t0 = performance.now() - (S.animPower ? 0 : 0); syncButtons(); });
+  $('autoRot').addEventListener('click', () => { S.autoRot = !S.autoRot; syncButtons(); dirty = true; });
+  $('animC').addEventListener('click', () => { S.animC = !S.animC; syncButtons(); });
+  $('palette').addEventListener('change', (e) => { S.pal = +e.target.value; dirty = true; });
+  const qSel = $('quality');
+  qSel.value = S.quality;
+  qSel.addEventListener('change', () => { S.quality = qSel.value; store.set('quality', S.quality); dirty = true; });
+  $('resetView').addEventListener('click', () => { S.rot = frameFromAngles(0.6, 0.35); S.dist = 3.4; S.target = [0, 0, 0]; dirty = true; });
+  S.rot = frameFromAngles(0.6, 0.35);
+
+  const panel = $('panel'), toggle = $('toggle');
+  function setPanel(open) {
+    panel.classList.toggle('collapsed', !open);
+    toggle.setAttribute('aria-expanded', String(open));
+    toggle.textContent = open ? 'たたむ' : 'ひらく';
+  }
+  toggle.addEventListener('click', () => setPanel(panel.classList.contains('collapsed')));
+  if (narrow) setPanel(false);
+
+  new ResizeObserver(() => { dirty = true; }).observe(canvas);
+
+  syncPower(); syncC(); syncKind(); syncButtons();
+  $('itersOut').textContent = S.iters;
+  requestAnimationFrame(frame);
+})();
+</script>
+
+</body>
+</html>

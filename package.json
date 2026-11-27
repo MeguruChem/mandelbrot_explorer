@@ -1,0 +1,11 @@
+{
+  "name": "mandelbrot-explorer",
+  "private": true,
+  "description": "Mandelbrot set deep-zoom explorer and Mandelbulb viewer for the browser",
+  "scripts": {
+    "build:wasm": "node tools/build-wasm.mjs"
+  },
+  "devDependencies": {
+    "assemblyscript": "0.27.29"
+  }
+}
