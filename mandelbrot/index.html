@@ -697,14 +697,26 @@ button.dive[aria-pressed="true"] b { color: var(--accent); }
       const d = e.data;
       const x = BigInt(d.x), y = BigInt(d.y), P = d.P, maxIter = d.maxIter;
       const Pb = BigInt(P), P1 = BigInt(P - 1);
-      const sh = Math.max(0, P - 60), S = BigInt(sh), inv = Math.pow(2, -(P - sh));
+      // BigInt fixed point -> double with full relative precision. Taking only the top 60 bits
+      // of the fraction would round |z| < ~1e-18 to 0: an orbit that returns close to 0 (the
+      // reference at a minibrot's centre does so every period) would then be wrong, and the
+      // perturbed pixels with it. Small values are re-read with a smaller shift instead.
+      const BIG = 9007199254740992n;   // 2^53
+      const pow2 = (e) => Math.pow(2, Math.trunc(e / 2)) * Math.pow(2, e - Math.trunc(e / 2));
+      const toD = (v) => {
+        for (let s = P - 60; ; s -= 60) {
+          if (s <= 0) return Number(v) * pow2(-P);
+          const t = v >> BigInt(s);
+          if (t >= BIG || t <= -BIG) return Number(t) * pow2(s - P);
+        }
+      };
       const Z = new Float64Array(2 * (maxIter + 2));
       let zr = 0n, zi = 0n, n = 1, escaped = false;
       for (; n <= maxIter; n++) {
         const nzr = ((zr * zr - zi * zi) >> Pb) + x;
         zi = ((zr * zi) >> P1) + y;
         zr = nzr;
-        const a = Number(zr >> S) * inv, b = Number(zi >> S) * inv;
+        const a = toD(zr), b = toD(zi);
         Z[2 * n] = a; Z[2 * n + 1] = b;
         if (a * a + b * b > 1e6) { escaped = true; n++; break; }
         if ((n & 4095) === 0) postMessage({ id: d.id, progress: n / maxIter });
