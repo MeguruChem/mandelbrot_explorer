@@ -2,6 +2,7 @@
   "name": "mandelbrot-explorer",
   "private": true,
   "description": "Mandelbrot set deep-zoom explorer and Mandelbulb viewer for the browser",
+  "license": "MIT",
   "scripts": {
     "build:wasm": "node tools/build-wasm.mjs"
   },
